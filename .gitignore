@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local databases and runtime logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Captured/registered face images
+master_*.jpg
+master_*.jpeg
+master_*.png
+static/captures/
+
+# Local OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Large ML artifacts
+Silent-Face-Anti-Spoofing/
+*.onnx
+*.pth
+*.pt
+*.h5
+*.tflite

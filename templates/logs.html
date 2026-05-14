@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>도어락 관리 시스템</title>
+  <link rel="manifest" href="/static/manifest.json" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: #4A8FD4; --primary-soft: #E8F2FC; --bg: #F0F5FB; --card: #FFFFFF;
+      --text: #1C2B3A; --sub: #7A92A8; --border: #DDE8F2; --success: #4CAF82; --danger: #E05C5C;
+      --radius: 18px; --radius-sm: 12px;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    body { font-family: 'Noto Sans KR', sans-serif; background: var(--bg); color: var(--text); max-width: 430px; margin: 0 auto; min-height: 100vh; overflow-x: hidden; }
+ 
+    .topbar { background: var(--card); padding: 14px 20px; display: flex; align-items: center; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; }
+    .topbar .back { font-size: 22px; color: var(--text); width: 32px; cursor: pointer; flex-shrink: 0; line-height: 1; }
+    .topbar .title { flex: 1; text-align: center; font-size: 16px; font-weight: 600; color: var(--text); }
+    .topbar .more { width: 32px; height: 32px; border: 1.5px solid var(--border); border-radius: 8px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 13px; color: var(--sub); flex-shrink: 0; letter-spacing: 1px; }
+ 
+    .hero { background: linear-gradient(145deg, #E2EEF8 0%, #EEF4FB 100%); padding: 28px 24px 24px; display: flex; align-items: center; justify-content: space-between; }
+    .hero-status { font-size: 30px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+    .hero-time { font-size: 13px; color: var(--sub); margin-bottom: 12px; }
+ 
+    .device-img { width: 82px; height: 82px; background: linear-gradient(150deg, #2C3E50, #3D5468); border-radius: 14px; display: flex; align-items: center; justify-content: center; box-shadow: 5px 7px 20px rgba(0,0,0,0.28); position: relative; overflow: hidden; flex-shrink: 0; }
+    .device-img::before { content: ''; position: absolute; top: 12px; left: 50%; transform: translateX(-50%); width: 28px; height: 5px; background: #4A8FD4; border-radius: 3px; }
+    .device-keypad { position: absolute; bottom: 10px; display: grid; grid-template-columns: repeat(3, 8px); gap: 3px; }
+    .device-keypad span { width: 8px; height: 8px; border-radius: 2px; background: rgba(255,255,255,0.15); }
+ 
+    .lock-btns-wrap { background: linear-gradient(160deg, #DAEEFF 0%, #EDF4FB 100%); padding: 28px 20px 24px; display: flex; flex-direction: column; align-items: center; gap: 20px; }
+    .lock-btns-row { display: flex; gap: 32px; justify-content: center; }
+    .lock-circle-btn { display: flex; flex-direction: column; align-items: center; gap: 10px; cursor: pointer; }
+    .lock-circle-btn .outer-ring { width: 96px; height: 96px; border-radius: 50%; background: rgba(255,255,255,0.5); display: flex; align-items: center; justify-content: center; border: 2px solid rgba(74,143,212,0.15); transition: all 0.2s; }
+    .lock-circle-btn:active .outer-ring { background: rgba(255,255,255,0.8); box-shadow: 0 4px 20px rgba(74,143,212,0.25); }
+    .lock-circle-btn .inner-circle { width: 78px; height: 78px; border-radius: 50%; background: var(--card); box-shadow: 0 4px 18px rgba(74,143,212,0.18), inset 0 -2px 6px rgba(74,143,212,0.08); display: flex; align-items: center; justify-content: center; border: 2px solid rgba(74,143,212,0.12); }
+    .lock-circle-btn .inner-circle svg { width: 34px; height: 34px; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .lock-circle-btn.open-btn .inner-circle svg { stroke: #48BB78; }
+    .lock-circle-btn.close-btn .inner-circle svg { stroke: var(--primary); }
+    .lock-circle-btn .btn-label { font-size: 13px; font-weight: 600; color: var(--sub); }
+ 
+    .menu-list { padding: 0 16px 40px; display: flex; flex-direction: column; gap: 10px; }
+    .menu-item { background: var(--card); border-radius: var(--radius); border: 1px solid var(--border); box-shadow: 0 2px 10px rgba(0,0,0,0.04); overflow: hidden; cursor: pointer; transition: transform 0.15s; }
+    .menu-item:active { transform: scale(0.985); }
+    .menu-header { padding: 16px 18px; display: flex; align-items: center; gap: 12px; }
+    .menu-icon-wrap { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .menu-icon-wrap svg { width: 18px; height: 18px; stroke-width: 1.8; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .menu-icon-wrap.blue { background: #E8F2FC; } .menu-icon-wrap.blue svg { stroke: var(--primary); }
+    .menu-icon-wrap.green { background: #E6F5EE; } .menu-icon-wrap.green svg { stroke: var(--success); }
+    .menu-icon-wrap.orange { background: #FEF3E6; } .menu-icon-wrap.orange svg { stroke: #D97B3A; }
+    .menu-text { flex: 1; }
+    .menu-name { font-size: 15px; font-weight: 600; color: var(--text); }
+    .menu-desc { font-size: 12px; color: var(--sub); margin-top: 2px; }
+    .menu-right { display: flex; align-items: center; gap: 8px; }
+    .menu-badge { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 20px; }
+    .badge-blue { background: rgba(74,143,212,0.1); color: var(--primary); }
+    .menu-chevron { color: var(--border); font-size: 18px; font-weight: 300; }
+ 
+    .log-preview { border-top: 1px solid var(--border); padding: 12px 18px; display: flex; align-items: center; gap: 10px; }
+    .log-preview-icon { font-size: 13px; }
+    .log-preview-text { font-size: 13px; color: var(--sub); flex: 1; }
+    .log-preview-time { font-size: 12px; color: var(--sub); flex-shrink: 0; }
+ 
+    .panel { display: none; padding: 16px 16px 40px; }
+    .panel.visible { display: block; }
+    .panel-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .panel-back { width: 34px; height: 34px; border-radius: 10px; background: var(--card); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 18px; color: var(--text); flex-shrink: 0; }
+    .panel-title { font-size: 17px; font-weight: 700; }
+    .panel-count { font-size: 12px; color: var(--sub); margin-left: auto; }
+ 
+    .log-item { background: var(--card); border-radius: var(--radius-sm); padding: 14px 16px; margin-bottom: 8px; display: flex; align-items: center; gap: 14px; border: 1px solid var(--border); border-left: 3px solid transparent; }
+    .log-item.access { border-left-color: var(--success); }
+    .log-item.intrusion { border-left-color: var(--danger); }
+    .log-item.remote { border-left-color: var(--primary); }
+    .log-dot { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+    .log-item.access .log-dot { background: rgba(76,175,130,0.1); }
+    .log-item.intrusion .log-dot { background: rgba(224,92,92,0.1); }
+    .log-item.remote .log-dot { background: rgba(74,143,212,0.1); }
+    .log-info { flex: 1; }
+    .log-name { font-size: 14px; font-weight: 600; }
+    .log-time { font-size: 11px; color: var(--sub); margin-top: 2px; }
+    .log-tag { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 20px; flex-shrink: 0; }
+    .log-item.access .log-tag { background: rgba(76,175,130,0.1); color: var(--success); }
+    .log-item.intrusion .log-tag { background: rgba(224,92,92,0.1); color: var(--danger); }
+    .log-item.remote .log-tag { background: rgba(74,143,212,0.1); color: var(--primary); }
+ 
+    .empty-state { padding: 40px 20px; text-align: center; color: var(--sub); font-size: 13px; }
+ 
+    .toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(10px); background: rgba(28,43,58,0.92); color: #fff; padding: 10px 20px; border-radius: 24px; font-size: 13px; font-weight: 500; opacity: 0; transition: all 0.25s; pointer-events: none; z-index: 999; white-space: nowrap; }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+ 
+    .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 200; backdrop-filter: blur(3px); align-items: flex-end; justify-content: center; }
+    .overlay.open { display: flex; }
+    .sheet { background: var(--card); width: 100%; max-width: 430px; border-radius: 24px 24px 0 0; padding: 20px 24px 40px; animation: su 0.28s ease; }
+    @keyframes su { from { transform:translateY(100%); } to { transform:translateY(0); } }
+    .sheet-handle { width: 40px; height: 4px; background: var(--border); border-radius: 2px; margin: 0 auto 20px; }
+    .sheet-title { font-size: 17px; font-weight: 700; margin-bottom: 14px; }
+    .sheet-row { display: flex; justify-content: space-between; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--border); }
+    .sheet-row:last-child { border-bottom: none; }
+    .sheet-label { font-size: 14px; color: var(--sub); }
+    .sheet-val { font-size: 14px; font-weight: 600; color: var(--text); }
+    .sheet-val.on { color: var(--success); }
+    .fade-in { animation: fi 0.3s ease; }
+    @keyframes fi { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+ 
+    .btn-photo { background: var(--primary-soft); color: var(--primary); border: none; padding: 5px 10px; border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; }
+    #photoModal .modal-img { width: 100%; border-radius: 12px; border: 1px solid var(--border); margin: 15px 0; }
+    #photoModal .close-photo { width: 100%; background: var(--primary); color: #fff; border: none; padding: 14px; border-radius: 50px; font-weight: 600; cursor: pointer; }
+ 
+    .logout-btn { width: 100%; margin-top: 20px; padding: 15px; background: rgba(224,92,92,0.08); color: var(--danger); border: 1.5px solid rgba(224,92,92,0.2); border-radius: 14px; font-family: 'Noto Sans KR', sans-serif; font-size: 15px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .logout-confirm-title { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+    .logout-confirm-desc { font-size: 14px; color: var(--sub); margin-bottom: 24px; line-height: 1.6; }
+    .logout-confirm-btns { display: flex; gap: 10px; }
+    .logout-confirm-btns button { flex: 1; padding: 15px; border-radius: 14px; font-family: 'Noto Sans KR', sans-serif; font-size: 15px; font-weight: 600; cursor: pointer; border: none; }
+    .btn-cancel { background: var(--bg); color: var(--sub); border: 1.5px solid var(--border) !important; }
+    .btn-logout-confirm { background: var(--danger); color: #fff; }
+  </style>
+</head>
+<body>
+ 
+<header class="topbar">
+  <div class="back" id="backBtn" onclick="goBack()">‹</div>
+  <div class="title" id="pageTitle">도어락 관리 시스템</div>
+  <div class="more" onclick="openStatusModal()">···</div>
+</header>
+ 
+<div id="homeView">
+  <div class="hero">
+    <div class="hero-left">
+      <div class="hero-status" id="lockStatus">잠김</div>
+      <div class="hero-time" id="lastTime">오늘 --:--</div>
+    </div>
+    <div class="device-img">
+      <div class="device-keypad"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+    </div>
+  </div>
+ 
+  <div class="lock-btns-wrap">
+    <div class="lock-btns-row">
+      <div class="lock-circle-btn open-btn" onclick="doorControl('open')">
+        <div class="outer-ring"><div class="inner-circle"><svg viewBox="0 0 40 40"><rect x="8" y="19" width="24" height="15" rx="4"/><path d="M14 19V14a6 6 0 0 1 12 0" stroke="#48BB78" stroke-width="2.2" fill="none" opacity="0.45"/><circle cx="20" cy="26.5" r="2.5" fill="#48BB78"/></svg></div></div>
+        <div class="btn-label">Open</div>
+      </div>
+      <div class="lock-circle-btn close-btn" onclick="doorControl('close')">
+        <div class="outer-ring"><div class="inner-circle"><svg viewBox="0 0 40 40"><rect x="8" y="19" width="24" height="15" rx="4"/><path d="M14 19V14a6 6 0 0 1 12 0v5" stroke="#4A8FD4" stroke-width="2.2" fill="none"/><circle cx="20" cy="26.5" r="2.5" fill="#4A8FD4"/></svg></div></div>
+        <div class="btn-label">Close</div>
+      </div>
+    </div>
+  </div>
+ 
+  <div class="menu-list">
+    <div class="menu-item" onclick="showPanel('logPanel', '출입 / 기록')">
+      <div class="menu-header">
+        <div class="menu-icon-wrap blue"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div>
+        <div class="menu-text"><div class="menu-name">로그</div><div class="menu-desc">출입 및 기록 확인</div></div>
+        <div class="menu-right"><span class="menu-badge badge-blue">오늘</span><span class="menu-chevron">›</span></div>
+      </div>
+      <div class="log-preview" id="logPreview"><span class="log-preview-icon">🔒</span><span class="log-preview-text">최근 기록 없음</span><span class="log-preview-time"></span></div>
+    </div>
+ 
+    <div class="menu-item" onclick="showPanel('intrusionPanel', '침입 감지')">
+      <div class="menu-header">
+        <div class="menu-icon-wrap green"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+        <div class="menu-text"><div class="menu-name">침입 감지</div><div class="menu-desc">침입 시도 기록 확인</div></div>
+        <div class="menu-right"><span class="menu-badge" id="intrusionBadge" style="background:rgba(224,92,92,0.1);color:var(--danger);">0건</span><span class="menu-chevron">›</span></div>
+      </div>
+    </div>
+ 
+    <div class="menu-item" onclick="showPanel('usersPanel', '사용자 관리')">
+      <div class="menu-header">
+        <div class="menu-icon-wrap orange"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+        <div class="menu-text"><div class="menu-name">사용자 관리</div><div class="menu-desc">등록된 사용자 확인 및 추가</div></div>
+        <div class="menu-right"><span class="menu-chevron">›</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+ 
+<div class="panel" id="logPanel">
+  <div class="panel-header"><div class="panel-back" onclick="goBack()">‹</div><div class="panel-title">출입 / 기록</div><div class="panel-count" id="logCount"></div></div>
+  <div id="logList"><div class="empty-state">불러오는 중...</div></div>
+</div>
+ 
+<div class="panel" id="usersPanel">
+  <div class="panel-header">
+    <div class="panel-back" onclick="goBack()">‹</div>
+    <div class="panel-title">사용자 관리</div>
+    <div class="panel-count" id="userCount"></div>
+  </div>
+  <div id="userList"><div class="empty-state">불러오는 중...</div></div>
+</div>
+ 
+<div class="panel" id="registerPanel">
+  <div class="panel-header">
+    <div class="panel-back" onclick="showPanel('usersPanel', '사용자 관리')">‹</div>
+    <div class="panel-title">새 사용자 등록</div>
+  </div>
+  <div style="background:var(--card); border-radius:var(--radius-sm); padding:16px; margin-bottom:12px; border:1px solid var(--border);">
+    <div style="font-size:13px; color:var(--sub); margin-bottom:14px;">카메라 앞에 서서 등록 버튼을 누르면 3초 후 자동 촬영됩니다.</div>
+    <input id="newUserId" type="text" placeholder="영문 ID (예: muho)" style="width:100%; padding:10px 14px; border-radius:10px; border:1.5px solid var(--border); font-size:14px; font-family:'Noto Sans KR'; margin-bottom:8px; outline:none;">
+    <input id="newUserName" type="text" placeholder="한글 이름 (예: 무호)" style="width:100%; padding:10px 14px; border-radius:10px; border:1.5px solid var(--border); font-size:14px; font-family:'Noto Sans KR'; margin-bottom:12px; outline:none;">
+    <button onclick="registerUser()" style="width:100%; padding:14px; background:var(--primary); color:white; border:none; border-radius:10px; font-size:14px; font-weight:600; font-family:'Noto Sans KR'; cursor:pointer;">📸 카메라로 등록 (3초 후 촬영)</button>
+  </div>
+</div>
+ 
+<div class="panel" id="intrusionPanel">
+  <div class="panel-header"><div class="panel-back" onclick="goBack()">‹</div><div class="panel-title">침입 감지</div><div class="panel-count" id="intrusionCount"></div></div>
+  <div id="intrusionList"><div class="empty-state">불러오는 중...</div></div>
+</div>
+ 
+<!-- 시스템 상태 모달 -->
+<div class="overlay" id="statusModal" onclick="closeModal(event)">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">시스템 상태</div>
+    <div class="sheet-row"><div class="sheet-label">연결 상태</div><div class="sheet-val on">온라인</div></div>
+    <div class="sheet-row"><div class="sheet-label">카메라</div><div class="sheet-val on">활성</div></div>
+    <div class="sheet-row"><div class="sheet-label">마지막 활동</div><div class="sheet-val" id="mLast">-</div></div>
+    <div class="sheet-row"><div class="sheet-label">잠금 상태</div><div class="sheet-val" id="mLock">잠김</div></div>
+    <button class="logout-btn" onclick="openLogoutConfirm()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      로그아웃
+    </button>
+  </div>
+</div>
+ 
+<!-- 로그아웃 확인 모달 -->
+<div class="overlay" id="logoutConfirmModal" onclick="if(event.target===this) this.classList.remove('open')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="logout-confirm-title">로그아웃 하시겠어요?</div>
+    <div class="logout-confirm-desc">로그아웃하면 로그인 페이지로 이동합니다.</div>
+    <div class="logout-confirm-btns">
+      <button class="btn-cancel" onclick="document.getElementById('logoutConfirmModal').classList.remove('open')">취소</button>
+      <button class="btn-logout-confirm" onclick="doLogout()">로그아웃</button>
+    </div>
+  </div>
+</div>
+ 
+<!-- 사진 모달 -->
+<div class="overlay" id="photoModal" onclick="if(event.target===this) this.classList.remove('open')">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">침입자 사진 확인</div>
+    <img id="modalImg" class="modal-img" src="">
+    <button class="close-photo" onclick="document.getElementById('photoModal').classList.remove('open')">닫기</button>
+  </div>
+</div>
+ 
+<div class="toast" id="toast"></div>
+ 
+<script>
+  let currentView = 'home';
+ 
+  function showPanel(id, title) {
+    document.getElementById('homeView').style.display = 'none';
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
+    document.getElementById(id).classList.add('visible');
+    document.getElementById('pageTitle').textContent = title;
+    currentView = id;
+    if (id === 'logPanel') loadLogs();
+    if (id === 'intrusionPanel') loadIntrusions();
+    if (id === 'usersPanel') loadUsers();
+    if (id === 'registerPanel') {
+      document.getElementById('newUserId').value = '';
+      document.getElementById('newUserName').value = '';
+    }
+  }
+ 
+  function goBack() {
+    if (currentView === 'home') return;
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('visible'));
+    document.getElementById('homeView').style.display = 'block';
+    document.getElementById('pageTitle').textContent = '도어락 관리 시스템';
+    currentView = 'home';
+  }
+ 
+  async function doorControl(action) {
+    const label = action === 'open' ? '잠금 해제' : '잠금';
+    showToast(`🔐 ${label} 요청 중...`);
+    try {
+      const res = await fetch('/api/door_control', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({action}) });
+      const data = await res.json();
+      if (data.success) {
+        document.getElementById('lockStatus').textContent = action === 'open' ? '열림' : '잠김';
+        document.getElementById('mLock').textContent = action === 'open' ? '열림' : '잠김';
+        showToast(`✅ ${label} 완료`);
+        updateTime();
+      } else { showToast('❌ ' + (data.error || '요청 실패')); }
+    } catch(e) { showToast(`✅ ${label} 요청 전송됨`); }
+  }
+ 
+  function updateTime() {
+    const now = new Date();
+    document.getElementById('lastTime').textContent = `오늘 ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  }
+ 
+  async function loadLogs() {
+    try {
+      const res = await fetch('/logs');
+      const logs = await res.json();
+      renderLogs(logs);
+      renderPreview(logs);
+      updateIntrusionBadge(logs);
+    } catch(e) { document.getElementById('logList').innerHTML = '<div class="empty-state">기록을 불러올 수 없습니다</div>'; }
+  }
+ 
+  async function loadIntrusions() {
+    try {
+      const res = await fetch('/logs');
+      const logs = await res.json();
+      const intrusions = logs.filter(l => l.status === 'INTRUSION' || l.status === 'INTRUSION_ALERT');
+      document.getElementById('intrusionCount').textContent = intrusions.length + '건';
+      if (!intrusions.length) {
+        document.getElementById('intrusionList').innerHTML = '<div class="empty-state">침입 기록이 없습니다.</div>';
+        return;
+      }
+      document.getElementById('intrusionList').innerHTML = intrusions.map(log => `
+        <div class="log-item intrusion fade-in">
+          <div class="log-dot">⚠️</div>
+          <div class="log-info">
+            <div class="log-name">${log.name}</div>
+            <div class="log-time">${log.time || ''}</div>
+          </div>
+          <button class="btn-photo" onclick="openPhoto('${log.image}')">사진 확인</button>
+        </div>`).join('');
+    } catch(e) { console.error(e); }
+  }
+ 
+  async function loadUsers() {
+    try {
+      const res = await fetch('/api/users');
+      const users = await res.json();
+      document.getElementById('userCount').textContent = users.length + '명';
+      const addBtn = `<div style="padding:16px 0 100px;"><button onclick="showPanel('registerPanel','새 사용자 등록')" style="width:100%;padding:14px;background:var(--primary);color:white;border:none;border-radius:50px;font-size:14px;font-weight:600;font-family:'Noto Sans KR';cursor:pointer;">+ 새 사용자 등록</button></div>`;
+      if (!users.length) { document.getElementById('userList').innerHTML = '<div class="empty-state">등록된 사용자가 없습니다</div>' + addBtn; return; }
+      document.getElementById('userList').innerHTML = users.map(user => {
+        const maskPhoto = user.photos.find(p => p.includes('mask'));
+        const normalPhoto = user.photos.find(p => !p.includes('mask'));
+        return `<div class="log-item access fade-in">
+          <div style="display:flex;align-items:center;gap:14px;width:100%;">
+            <img src="/master/${normalPhoto || user.photos[0]}?t=${Date.now()}"
+                style="width:70px;height:70px;border-radius:10px;object-fit:cover;flex-shrink:0;"
+                onerror="this.style.display='none'">
+            <div style="flex:1;">
+              <div class="log-name">${user.name}</div>
+              <div class="log-time">등록 사진 ${user.photos.length}장</div>
+              <div class="log-time" style="margin-top:2px;">마스크: ${maskPhoto ? '✅ 등록됨' : '❌ 미등록'}</div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:16px;flex-shrink:0;">
+              <div class="log-tag" style="background:rgba(76,175,130,0.1);color:var(--success);">등록됨</div>
+              <div style="display:flex;gap:6px;">
+                <button onclick="retakePhoto('${user.id}','${user.name}')" style="width:80px;padding:8px 12px;background:var(--primary-soft);color:var(--primary);border:none;border-radius:8px;font-size:12px;font-weight:600;font-family:'Noto Sans KR';cursor:pointer;">📸 재촬영</button>
+                <button onclick="deleteUser('${user.id}','${user.name}')" style="width:80px;padding:8px 12px;background:rgba(224,92,92,0.1);color:var(--danger);border:none;border-radius:8px;font-size:12px;font-weight:600;font-family:'Noto Sans KR';cursor:pointer;">🗑 삭제</button>
+              </div>
+            </div>
+          </div>
+        </div>`;
+      }).join('') + addBtn;
+    } catch(e) { document.getElementById('userList').innerHTML = '<div class="empty-state">불러올 수 없습니다</div>'; }
+  }
+ 
+  async function registerUser() {
+    const userId = document.getElementById('newUserId').value.trim();
+    const displayName = document.getElementById('newUserName').value.trim();
+    if (!userId || !displayName) { showToast('❌ ID와 이름을 모두 입력해주세요'); return; }
+    showToast('📸 3초 후 촬영합니다. 카메라를 바라봐주세요!');
+    try {
+      const res = await fetch('/api/register', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({user_id:userId, display_name:displayName}) });
+      const data = await res.json();
+      if (data.success) { showToast(`✅ ${displayName} 등록 완료!`); document.getElementById('newUserId').value=''; document.getElementById('newUserName').value=''; loadUsers(); }
+      else { showToast('❌ ' + (data.error || '등록 실패')); }
+    } catch(e) { showToast('❌ 오류 발생'); }
+  }
+ 
+  async function deleteUser(userId, displayName) {
+    if (!confirm(`${displayName}을(를) 삭제할까요?`)) return;
+    try {
+      const res = await fetch('/api/delete_user', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({user_id:userId}) });
+      const data = await res.json();
+      if (data.success) { showToast(`✅ ${displayName} 삭제 완료`); loadUsers(); }
+      else { showToast('❌ ' + (data.error || '삭제 실패')); }
+    } catch(e) { showToast('❌ 오류 발생'); }
+  }
+ 
+  async function retakePhoto(userId, displayName) {
+    if (!confirm(`${displayName}의 사진을 다시 찍을까요?`)) return;
+    showToast('📸 3초 후 촬영합니다. 카메라를 바라봐주세요!');
+    try {
+      const res = await fetch('/api/register', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({user_id:userId, display_name:displayName}) });
+      const data = await res.json();
+      if (data.success) { showToast(`✅ ${displayName} 재촬영 완료!`); loadUsers(); }
+      else { showToast('❌ ' + (data.error || '재촬영 실패')); }
+    } catch(e) { showToast('❌ 오류 발생'); }
+  }
+ 
+  function openPhoto(path) {
+    if (!path || path === 'None' || path === '') { showToast('⚠️ 저장된 사진이 없습니다.'); return; }
+    document.getElementById('modalImg').src = path.startsWith('static/') ? '/' + path : '/static/' + path;
+    document.getElementById('photoModal').classList.add('open');
+  }
+ 
+  function updateIntrusionBadge(logs) {
+    const count = logs.filter(l => l.status === 'INTRUSION' || l.status === 'INTRUSION_ALERT').length;
+    const badge = document.getElementById('intrusionBadge');
+    if (badge) {
+      badge.textContent = count + '건';
+      badge.style.background = count > 0 ? 'rgba(224,92,92,0.1)' : 'rgba(76,175,130,0.1)';
+      badge.style.color = count > 0 ? 'var(--danger)' : 'var(--success)';
+    }
+  }
+ 
+  function renderLogs(logs) {
+    document.getElementById('logCount').textContent = logs.length + '건';
+    if (!logs.length) { document.getElementById('logList').innerHTML = '<div class="empty-state">기록이 없습니다.</div>'; return; }
+    const labelMap = { 'ACCESS':'정상 출입', 'INTRUSION':'침입 감지', 'INTRUSION_ALERT':'침입 경보', 'REMOTE_OPEN':'원격 열림', 'REMOTE_CLOSE':'원격 잠금' };
+    document.getElementById('logList').innerHTML = logs.map(log => {
+      const type = log.status === 'ACCESS' ? 'access' : log.status && log.status.includes('REMOTE') ? 'remote' : 'intrusion';
+      const emoji = type === 'access' ? '✅' : type === 'remote' ? '📱' : '⚠️';
+      return `<div class="log-item ${type} fade-in">
+        <div class="log-dot">${emoji}</div>
+        <div class="log-info"><div class="log-name">${log.name}</div><div class="log-time">${log.time || ''}</div></div>
+        <div class="log-tag">${labelMap[log.status] || log.status}</div>
+      </div>`;
+    }).join('');
+  }
+ 
+  function renderPreview(logs) {
+    if (!logs || !logs.length) return;
+    const l = logs[0];
+    const icon = l.status === 'ACCESS' ? '🔒' : l.status && l.status.includes('REMOTE') ? '📱' : '⚠️';
+    let msg = l.status === 'ACCESS' ? `${l.name}님 출입 확인` : l.status.includes('REMOTE') ? '원격으로 문을 제어함' : `[경고] ${l.name} 감지됨`;
+    const time = l.time ? l.time.split(' ')[1]?.substring(0,5) || '' : '';
+    const el = document.getElementById('logPreview');
+    if (el) el.innerHTML = `<span class="log-preview-icon">${icon}</span><span class="log-preview-text">${msg}</span><span class="log-preview-time">${time}</span>`;
+  }
+ 
+  async function fetchStatus() {
+    try {
+      const res = await fetch('/api/system_status');
+      const d = await res.json();
+      if (d.last_activity) {
+        document.getElementById('mLast').textContent = d.last_activity;
+        const t = d.last_activity.split(' ')[1] || '';
+        if (t) document.getElementById('lastTime').textContent = '오늘 ' + t.substring(0,5);
+      }
+    } catch(e) {}
+  }
+ 
+  function openStatusModal() { document.getElementById('statusModal').classList.add('open'); }
+  function closeModal(e) { if (e.target === document.getElementById('statusModal')) document.getElementById('statusModal').classList.remove('open'); }
+ 
+  function openLogoutConfirm() {
+    document.getElementById('statusModal').classList.remove('open');
+    setTimeout(() => document.getElementById('logoutConfirmModal').classList.add('open'), 200);
+  }
+ 
+  function doLogout() { window.location.href = '/logout'; }
+ 
+  let _t;
+  function showToast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg; el.classList.add('show');
+    clearTimeout(_t); _t = setTimeout(() => el.classList.remove('show'), 2400);
+  }
+ 
+  fetchStatus(); loadLogs();
+  setInterval(fetchStatus, 10000);
+  setInterval(() => {
+    if (currentView === 'home' || currentView === 'logPanel') loadLogs();
+    if (currentView === 'intrusionPanel') loadIntrusions();
+  }, 10000);
+</script>
+</body>
+</html>

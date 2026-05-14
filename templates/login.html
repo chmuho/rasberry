@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>관리자 로그인 | 스마트 도어락</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+ 
+    body {
+      min-height: 100vh;
+      font-family: 'Noto Sans KR', sans-serif;
+      background: #ffffff;
+      color: #111111;
+    }
+ 
+    .page {
+      width: min(430px, 100%);
+      margin: 0 auto;
+      padding: 60px 28px 48px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+ 
+    /* TITLE */
+    .title {
+      font-size: 32px;
+      font-weight: 700;
+      color: #111;
+      letter-spacing: -0.02em;
+      margin-bottom: 36px;
+      line-height: 1.2;
+    }
+ 
+    /* FORM */
+    .form { display: flex; flex-direction: column; gap: 20px; }
+ 
+    .field { display: flex; flex-direction: column; gap: 8px; }
+    .field label {
+      font-size: 14px;
+      font-weight: 600;
+      color: #111;
+    }
+    .input-wrap {
+      position: relative;
+    }
+    .input-wrap input {
+      width: 100%;
+      border: 1.5px solid #e0e0e0;
+      border-radius: 14px;
+      padding: 16px 18px;
+      font-family: 'Noto Sans KR', sans-serif;
+      font-size: 15px;
+      color: #111;
+      background: #fff;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .input-wrap input::placeholder { color: #b0b0b0; font-weight: 400; }
+    .input-wrap input:focus { border-color: #111; }
+    .eye-btn {
+      position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; cursor: pointer; padding: 4px;
+      display: flex; align-items: center;
+    }
+    .eye-btn svg { width: 20px; height: 20px; stroke: #aaa; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+ 
+    /* SIGN IN BTN */
+    .signup-btn {
+      width: 100%;
+      background: #111;
+      color: #fff;
+      border: none;
+      border-radius: 50px;
+      padding: 18px;
+      font-family: 'Noto Sans KR', sans-serif;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.15s;
+      margin-top: 4px;
+    }
+    .signup-btn:active { opacity: 0.85; transform: scale(0.98); }
+  </style>
+</head>
+<body>
+<div class="page">
+ 
+  <!-- TITLE -->
+  <h1 class="title">관리자 로그인</h1>
+ 
+  <div class="form">
+ 
+    <!-- 아이디 -->
+    <div class="field">
+      <label for="username">아이디</label>
+      <div class="input-wrap">
+        <input type="text" id="username" placeholder="아이디를 입력하세요" />
+      </div>
+    </div>
+ 
+    <!-- 비밀번호 -->
+    <div class="field">
+      <label for="password">비밀번호</label>
+      <div class="input-wrap">
+        <input type="password" id="password" placeholder="비밀번호를 입력하세요" />
+        <button class="eye-btn" type="button" onclick="togglePw()" aria-label="비밀번호 보기">
+          <svg id="eyeIcon" viewBox="0 0 24 24">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+ 
+    <!-- 비밀번호 찾기 -->
+    <div style="display: flex; align-items: center; justify-content: space-between;">
+      <span style="font-size: 13px; color: #888;">비밀번호를 잊으셨나요?</span>
+      <a href="#" style="font-size: 13px; font-weight: 600; color: #111; text-decoration: none;" onclick="alert('비밀번호 찾기 페이지로 이동합니다.'); return false;">비밀번호 찾기</a>
+    </div>
+ 
+    <!-- 로그인 버튼 -->
+    <button class="signup-btn" type="button" onclick="submitLogin()">로그인</button>
+ 
+  </div>
+ 
+</div>
+ 
+<script>
+  let pwVisible = false;
+
+  function togglePw() {
+    pwVisible = !pwVisible;
+    const input = document.getElementById('password');
+    const icon = document.getElementById('eyeIcon');
+    input.type = pwVisible ? 'text' : 'password';
+    icon.style.stroke = pwVisible ? '#111' : '#aaa';
+  }
+
+  function submitLogin() {
+    const u = document.getElementById('username').value.trim();
+    const p = document.getElementById('password').value.trim();
+    if (!u || !p) { alert('아이디와 비밀번호를 모두 입력해주세요.'); return; }
+    const btn = document.querySelector('.signup-btn');
+    btn.disabled = true;
+    btn.textContent = '로그인 중...';
+    fetch('/api/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username: u, password: p})
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) { window.location.href = '/'; }
+      else { alert('로그인 실패: ' + (data.error || '알 수 없는 오류')); }
+    })
+    .catch(() => { alert('로그인 중 오류가 발생했습니다.'); })
+    .finally(() => { btn.disabled = false; btn.textContent = '로그인'; });
+  }
+</script>
+</body>
+</html>
+ 
