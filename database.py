@@ -1,5 +1,6 @@
 import sqlite3
 from datetime import datetime
+from werkzeug.security import check_password_hash, generate_password_hash
 
 DB_PATH = "doorlock_logs.db"
 
@@ -24,6 +25,13 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT UNIQUE,
         display_name TEXT
+    )
+    """)
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS admin_settings(
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
     )
     """)
 
@@ -90,6 +98,72 @@ def get_users():
         return {row[0]: row[1] for row in rows}  # {"muho": "무호"}
     except:
         return {}
+
+def get_admin_id(fallback_admin_id):
+    """저장된 관리자 아이디가 있으면 반환하고, 없으면 환경변수 기본값을 반환합니다."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM admin_settings WHERE key='admin_id'")
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else fallback_admin_id
+    except Exception as e:
+        print(f"[관리자 아이디 조회 실패] {e}")
+        return fallback_admin_id
+
+def set_admin_id(admin_id):
+    """관리자 아이디를 저장합니다."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+        INSERT OR REPLACE INTO admin_settings(key, value)
+        VALUES('admin_id', ?)
+        """, (admin_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[관리자 아이디 저장 실패] {e}")
+        return False
+
+def get_admin_password_hash():
+    """저장된 관리자 비밀번호 해시를 반환합니다."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM admin_settings WHERE key='admin_password_hash'")
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        print(f"[관리자 비밀번호 조회 실패] {e}")
+        return None
+
+def set_admin_password(password):
+    """관리자 비밀번호를 해시로 저장합니다."""
+    try:
+        password_hash = generate_password_hash(password)
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("""
+        INSERT OR REPLACE INTO admin_settings(key, value)
+        VALUES('admin_password_hash', ?)
+        """, (password_hash,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[관리자 비밀번호 저장 실패] {e}")
+        return False
+
+def verify_admin_password(password, fallback_password):
+    """DB에 저장된 비밀번호가 있으면 우선 확인하고, 없으면 환경변수 기본값을 확인합니다."""
+    password_hash = get_admin_password_hash()
+    if password_hash:
+        return check_password_hash(password_hash, password)
+    return password == fallback_password
 
 if __name__ == "__main__":
     init_db()

@@ -61,12 +61,23 @@
     }
     .input-wrap input::placeholder { color: #b0b0b0; font-weight: 400; }
     .input-wrap input:focus { border-color: #111; }
-    .eye-btn {
-      position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
-      background: none; border: none; cursor: pointer; padding: 4px;
-      display: flex; align-items: center;
+    .input-wrap input::-ms-reveal,
+    .input-wrap input::-ms-clear {
+      display: none;
     }
-    .eye-btn svg { width: 20px; height: 20px; stroke: #aaa; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .input-wrap input::-webkit-credentials-auto-fill-button {
+      visibility: hidden;
+      display: none !important;
+      pointer-events: none;
+    }
+    .input-wrap input[type="password"], .input-wrap input[type="text"]#password { padding-right: 52px; }
+    .eye-btn {
+      position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+      width: 32px; height: 32px; background: transparent; border: none; cursor: pointer; padding: 0;
+      display: flex; align-items: center; justify-content: center; color: #777;
+    }
+    .eye-btn svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+    .eye-btn.active { color: #111; }
  
     /* SIGN IN BTN */
     .signup-btn {
@@ -84,6 +95,8 @@
       margin-top: 4px;
     }
     .signup-btn:active { opacity: 0.85; transform: scale(0.98); }
+    .notice { display: none; margin-top: 18px; padding: 14px 16px; border-radius: 14px; font-size: 14px; line-height: 1.5; }
+    .notice.error { display: block; background: #FFF1F1; color: #B34040; border: 1px solid #F5D0D0; }
   </style>
 </head>
 <body>
@@ -107,24 +120,24 @@
       <label for="password">비밀번호</label>
       <div class="input-wrap">
         <input type="password" id="password" placeholder="비밀번호를 입력하세요" />
-        <button class="eye-btn" type="button" onclick="togglePw()" aria-label="비밀번호 보기">
-          <svg id="eyeIcon" viewBox="0 0 24 24">
-            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
-            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
-            <line x1="1" y1="1" x2="23" y2="23"/>
+        <button class="eye-btn" id="togglePwBtn" type="button" onclick="togglePw()" aria-label="비밀번호 보기">
+          <svg id="eyeIcon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/>
+            <circle cx="12" cy="12" r="2.7"/>
           </svg>
         </button>
       </div>
     </div>
  
-    <!-- 비밀번호 찾기 -->
-    <div style="display: flex; align-items: center; justify-content: space-between;">
-      <span style="font-size: 13px; color: #888;">비밀번호를 잊으셨나요?</span>
-      <a href="#" style="font-size: 13px; font-weight: 600; color: #111; text-decoration: none;" onclick="alert('비밀번호 찾기 페이지로 이동합니다.'); return false;">비밀번호 찾기</a>
+    <div style="display: flex; align-items: center; justify-content: flex-end; gap: 14px;">
+      <a href="/find-id" style="font-size: 13px; font-weight: 600; color: #111; text-decoration: none;">아이디 찾기</a>
+      <span style="font-size: 12px; color: #ddd;">|</span>
+      <a href="/forgot-password" style="font-size: 13px; font-weight: 600; color: #111; text-decoration: none;">비밀번호 찾기</a>
     </div>
  
     <!-- 로그인 버튼 -->
     <button class="signup-btn" type="button" onclick="submitLogin()">로그인</button>
+    <div id="notice" class="notice"></div>
  
   </div>
  
@@ -133,18 +146,34 @@
 <script>
   let pwVisible = false;
 
+  function showNotice(message) {
+    const notice = document.getElementById('notice');
+    notice.textContent = message;
+    notice.className = 'notice error';
+  }
+
+  ['username', 'password'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', event => {
+      if (event.key === 'Enter') submitLogin();
+    });
+  });
+
   function togglePw() {
     pwVisible = !pwVisible;
     const input = document.getElementById('password');
-    const icon = document.getElementById('eyeIcon');
+    const btn = document.getElementById('togglePwBtn');
     input.type = pwVisible ? 'text' : 'password';
-    icon.style.stroke = pwVisible ? '#111' : '#aaa';
+    btn.classList.toggle('active', pwVisible);
+    btn.setAttribute('aria-label', pwVisible ? '비밀번호 숨기기' : '비밀번호 보기');
+    btn.innerHTML = pwVisible
+      ? `<svg id="eyeIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 10.6A2.7 2.7 0 0 0 13.4 13.4"/><path d="M7.5 7.7C4 9.3 2 12 2 12s3.5 6 10 6c1.7 0 3.2-.4 4.4-1"/><path d="M20.2 14.4C21.4 13.1 22 12 22 12s-3.5-6-10-6c-.9 0-1.8.1-2.6.3"/></svg>`
+      : `<svg id="eyeIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.7"/></svg>`;
   }
 
   function submitLogin() {
     const u = document.getElementById('username').value.trim();
     const p = document.getElementById('password').value.trim();
-    if (!u || !p) { alert('아이디와 비밀번호를 모두 입력해주세요.'); return; }
+    if (!u || !p) { showNotice('아이디와 비밀번호를 모두 입력해주세요.'); return; }
     const btn = document.querySelector('.signup-btn');
     btn.disabled = true;
     btn.textContent = '로그인 중...';
@@ -156,9 +185,9 @@
     .then(r => r.json())
     .then(data => {
       if (data.success) { window.location.href = '/'; }
-      else { alert('로그인 실패: ' + (data.error || '알 수 없는 오류')); }
+      else { showNotice(data.error || '로그인에 실패했습니다.'); }
     })
-    .catch(() => { alert('로그인 중 오류가 발생했습니다.'); })
+    .catch(() => { showNotice('로그인 중 오류가 발생했습니다.'); })
     .finally(() => { btn.disabled = false; btn.textContent = '로그인'; });
   }
 </script>

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>아이디 변경 | 스마트 도어락</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { min-height: 100vh; font-family: 'Noto Sans KR', sans-serif; background: #F0F5FB; color: #1C2B3A; }
+    .page { width: min(430px, 100%); margin: 0 auto; min-height: 100vh; background: #F0F5FB; }
+    .topbar { background: #fff; padding: 14px 20px; display: flex; align-items: center; border-bottom: 1px solid #DDE8F2; position: sticky; top: 0; }
+    .back-btn { width: 34px; height: 34px; border-radius: 10px; background: #fff; border: 1px solid #DDE8F2; font-size: 20px; cursor: pointer; color: #1C2B3A; }
+    .top-title { flex: 1; text-align: center; font-size: 16px; font-weight: 700; padding-right: 34px; }
+    .content { padding: 22px 16px 40px; }
+    .card { background: #fff; border: 1px solid #DDE8F2; border-radius: 12px; padding: 18px; }
+    .title { font-size: 19px; font-weight: 700; margin-bottom: 6px; }
+    .desc { font-size: 13px; color: #7A92A8; line-height: 1.6; margin-bottom: 18px; }
+    .field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+    .field label { font-size: 13px; font-weight: 700; }
+    .field input { width: 100%; padding: 13px 14px; border-radius: 10px; border: 1.5px solid #DDE8F2; font-size: 14px; font-family: 'Noto Sans KR', sans-serif; outline: none; color: #1C2B3A; }
+    .field input:focus { border-color: #4A8FD4; }
+    .submit-btn { width: 100%; padding: 15px; background: #1C2B3A; color: white; border: none; border-radius: 10px; font-size: 14px; font-weight: 700; font-family: 'Noto Sans KR', sans-serif; cursor: pointer; margin-top: 6px; }
+    .notice { display: none; margin-top: 14px; padding: 13px 14px; border-radius: 10px; font-size: 13px; line-height: 1.5; }
+    .notice.info { display: block; background: #EDF6FF; color: #245C8F; border: 1px solid #D9EAFB; }
+    .notice.error { display: block; background: #FFF1F1; color: #B34040; border: 1px solid #F5D0D0; }
+  </style>
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <button class="back-btn" type="button" onclick="window.location.href='/'" aria-label="뒤로">‹</button>
+    <div class="top-title">아이디 변경</div>
+  </header>
+
+  <main class="content">
+    <section class="card">
+      <h1 class="title">관리자 아이디 변경</h1>
+      <p class="desc">현재 비밀번호를 확인한 뒤 새 관리자 아이디로 변경합니다. 변경 완료 후에는 다시 로그인합니다.</p>
+      <div class="field">
+        <label for="newAdminId">새 아이디</label>
+        <input id="newAdminId" type="text" placeholder="3자 이상 입력하세요">
+      </div>
+      <div class="field">
+        <label for="currentAdminPassword">현재 비밀번호</label>
+        <input id="currentAdminPassword" type="password" placeholder="현재 비밀번호">
+      </div>
+      <button id="changeIdBtn" class="submit-btn" onclick="changeAdminId()">아이디 변경</button>
+      <div id="notice" class="notice"></div>
+    </section>
+  </main>
+</div>
+
+<script>
+  function showNotice(message, type = 'info') {
+    const notice = document.getElementById('notice');
+    notice.textContent = message;
+    notice.className = `notice ${type}`;
+  }
+
+  async function changeAdminId() {
+    const newAdminId = document.getElementById('newAdminId').value.trim();
+    const currentPassword = document.getElementById('currentAdminPassword').value.trim();
+    if (!newAdminId || !currentPassword) {
+      showNotice('새 아이디와 현재 비밀번호를 모두 입력해주세요.', 'error');
+      return;
+    }
+    const btn = document.getElementById('changeIdBtn');
+    btn.disabled = true;
+    btn.textContent = '변경 중...';
+    try {
+      const res = await fetch('/api/id/change', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({new_admin_id: newAdminId, current_password: currentPassword})
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showNotice(data.error || '아이디 변경에 실패했습니다.', 'error');
+        return;
+      }
+      showNotice('아이디가 변경되었습니다. 로그인 화면으로 이동합니다.');
+      setTimeout(() => { window.location.href = '/login'; }, 900);
+    } catch(e) {
+      showNotice('아이디 변경 중 오류가 발생했습니다.', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '아이디 변경';
+    }
+  }
+</script>
+</body>
+</html>

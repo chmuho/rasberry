@@ -13,9 +13,24 @@ from anti_spoofing import check_real_face
 from mask_detector import detect_mask_by_landmark, get_upper_face_location
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DOOR_OPEN_SECONDS = 10
  
 # --- 웹 원격 제어 서버 ---
 rpi_server = Flask(__name__)
+
+def capture_frame_after_countdown(message):
+    print(message)
+    picam2.start()
+    warmup_start = get_time()
+    while get_time() - warmup_start < 3.0:
+        if int(get_time() * 4) % 2 == 0:
+            led_green.on()
+        else:
+            led_green.off()
+    led_green.off()
+    frame = picam2.capture_array()
+    picam2.stop()
+    return frame
  
 @rpi_server.route('/api/control/door', methods=['POST'])
 def remote_door_control():
@@ -45,16 +60,7 @@ def register_user():
         if not name:
             return jsonify({"success": False, "error": "이름을 입력해주세요"}), 400
  
-        print(f"\n📸 [{name}] 등록 시작... 3초 후 촬영")
-        picam2.start()
-        warmup_start = get_time()
-        while get_time() - warmup_start < 3.0:
-            if int(get_time() * 4) % 2 == 0: led_green.on()
-            else: led_green.off()
-        led_green.off()
- 
-        frame = picam2.capture_array()
-        picam2.stop()
+        frame = capture_frame_after_countdown(f"\n📸 [{name}] 등록 시작... 3초 후 촬영")
  
         locs = face_recognition.face_locations(frame)
         if not locs:
@@ -64,11 +70,56 @@ def register_user():
  
         enc_list = face_recognition.face_encodings(frame, locs)
         if enc_list:
-            masters[name] = {'no_mask': enc_list[0]}
+            if name not in masters:
+                masters[name] = {}
+            masters[name]['no_mask'] = enc_list[0]
             print(f"✅ [{name}] 등록 완료!")
             return jsonify({"success": True, "message": f"{name} 등록 완료"}), 200
         else:
             return jsonify({"success": False, "error": "인코딩 실패"}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@rpi_server.route('/api/register_mask', methods=['POST'])
+def register_mask():
+    try:
+        data = request.get_json()
+        name = data.get('name', '').strip()
+        if not name:
+            return jsonify({"success": False, "error": "이름을 입력해주세요"}), 400
+
+        frame = capture_frame_after_countdown(f"\n📸 [{name}] 마스크 등록 시작... 3초 후 촬영")
+
+        mask_path = os.path.join(BASE_DIR, f"master_{name}_mask.jpg")
+        cv2.imwrite(mask_path, frame)
+
+        locs = face_recognition.face_locations(frame)
+        used_fallback = False
+
+        if locs:
+            face_loc = locs[0]
+            _, upper_pts = detect_mask_by_landmark(frame, face_loc)
+            enc_loc = get_upper_face_location(upper_pts, frame.shape) if upper_pts else face_loc
+            enc_loc = enc_loc if enc_loc else face_loc
+        else:
+            enc_loc = get_center_face_location(frame)
+            used_fallback = True
+
+        enc_list = face_recognition.face_encodings(frame, [enc_loc])
+        if not enc_list:
+            return jsonify({
+                "success": False,
+                "error": "마스크 사진은 저장했지만 얼굴 인코딩에 실패했습니다. 얼굴을 카메라 중앙에 맞춰 다시 촬영해주세요"
+            }), 400
+
+        if name not in masters:
+            masters[name] = {}
+        masters[name]['mask'] = enc_list[0]
+        print(f"✅ [{name}] 마스크 등록 완료!")
+        message = f"{name} 마스크 등록 완료"
+        if used_fallback:
+            message += " (자동 얼굴 감지 실패로 중앙 영역을 사용했습니다)"
+        return jsonify({"success": True, "message": message}), 200
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
  
@@ -108,23 +159,39 @@ try:
 except Exception as e:
     print(f"❌ 카메라 초기화 실패: {e}")
     sys.exit(1)
+
+def get_center_face_location(frame):
+    height, width = frame.shape[:2]
+    return (
+        int(height * 0.08),
+        int(width * 0.85),
+        int(height * 0.82),
+        int(width * 0.15),
+    )
  
 def load_master_faces():
     known_encodings = {}
     print("📂 마스터 데이터를 불러오는 중...")
-    for file in os.listdir('.'):
+    for file in os.listdir(BASE_DIR):
         if not (file.startswith('master') and file.endswith(('.jpg', '.png', '.jpeg'))):
             continue
         try:
-            image = face_recognition.load_image_file(file)
-            enc_list = face_recognition.face_encodings(image)
-            if not enc_list: continue
-            enc = enc_list[0]
+            image_path = os.path.join(BASE_DIR, file)
+            image = face_recognition.load_image_file(image_path)
             raw_name = file.replace('master_', '').split('.')[0]
             if '_mask' in raw_name:
                 name = raw_name.replace('_mask', ''); key = 'mask'
             else:
                 name = raw_name; key = 'no_mask'
+            face_locs = face_recognition.face_locations(image)
+            enc_loc = face_locs[0] if face_locs else get_center_face_location(image)
+            if key == 'mask' and face_locs:
+                _, upper_pts = detect_mask_by_landmark(image, enc_loc)
+                upper_loc = get_upper_face_location(upper_pts, image.shape) if upper_pts else None
+                enc_loc = upper_loc if upper_loc else enc_loc
+            enc_list = face_recognition.face_encodings(image, [enc_loc])
+            if not enc_list: continue
+            enc = enc_list[0]
             if name not in known_encodings: known_encodings[name] = {}
             known_encodings[name][key] = enc
             print(f"✅ 로드 성공: {name} [{key}]")
@@ -133,32 +200,43 @@ def load_master_faces():
     return known_encodings
  
 def recognize_face(frame, face_location, known_encodings):
-    THRESHOLD_NORMAL = 0.45
-    THRESHOLD_MASK = 0.52
+    THRESHOLD_NORMAL = 0.50
+    THRESHOLD_MASK = 0.62
     is_masked, upper_pts = detect_mask_by_landmark(frame, face_location)
-    if is_masked and upper_pts:
-        enc_loc = get_upper_face_location(upper_pts, frame.shape)
-        enc_loc = enc_loc if enc_loc else face_location
-        threshold = THRESHOLD_MASK
-    else:
-        enc_loc = face_location
-        threshold = THRESHOLD_NORMAL
-    encs = face_recognition.face_encodings(frame, [enc_loc])
-    if not encs: return None, 1.0, is_masked
-    unknown_enc = encs[0]
-    best_name, best_dist = None, 1.0
-    for name, enc_dict in known_encodings.items():
-        candidates = [enc_dict.get('mask'), enc_dict.get('no_mask')] if is_masked else [enc_dict.get('no_mask'), enc_dict.get('mask')]
-        candidates = [c for c in candidates if c is not None]
-        if not candidates: continue
-        dists = face_recognition.face_distance(candidates, unknown_enc)
-        min_dist = float(np.min(dists))
-        if min_dist < threshold and min_dist < best_dist:
-            best_dist = min_dist; best_name = name
-    return best_name, best_dist, is_masked
+    unknown_encodings = []
+
+    full_encs = face_recognition.face_encodings(frame, [face_location])
+    if full_encs:
+        unknown_encodings.append((full_encs[0], 'no_mask', THRESHOLD_NORMAL))
+
+    if upper_pts:
+        upper_loc = get_upper_face_location(upper_pts, frame.shape)
+        if upper_loc:
+            upper_encs = face_recognition.face_encodings(frame, [upper_loc])
+            if upper_encs:
+                unknown_encodings.append((upper_encs[0], 'mask', THRESHOLD_MASK))
+
+    if not unknown_encodings:
+        return None, 1.0, is_masked
+
+    best_name, best_dist, best_key = None, 1.0, None
+    for unknown_enc, preferred_key, threshold in unknown_encodings:
+        for name, enc_dict in known_encodings.items():
+            candidate = enc_dict.get(preferred_key)
+            if candidate is None:
+                continue
+            dist = float(face_recognition.face_distance([candidate], unknown_enc)[0])
+            if dist < threshold and dist < best_dist:
+                best_dist = dist
+                best_name = name
+                best_key = preferred_key
+    matched_as_masked = best_key == 'mask' if best_key else is_masked
+    return best_name, best_dist, matched_as_masked
  
 def start_recognition(known_encodings):
-    if not known_encodings: return False, "데이터 없음", ""
+    if not known_encodings:
+        print("⚠️ 등록된 마스터 얼굴 데이터가 없습니다.")
+        return False, "데이터 없음", ""
  
     print("📸 카메라 예열 중... (3초)")
     picam2.start()
@@ -186,9 +264,15 @@ def start_recognition(known_encodings):
             if frame_count % 3 != 0: continue
  
             face_locations = face_recognition.face_locations(frame)
+            used_fallback_location = False
+            if not face_locations:
+                if frame_count % 9 == 0:
+                    print("⚠️ 얼굴을 감지하지 못했습니다. 중앙 영역으로 인식을 시도합니다.")
+                face_locations = [get_center_face_location(frame)]
+                used_fallback_location = True
             for face_loc in face_locations:
                 # Anti-spoofing 9프레임에 1번 체크
-                if frame_count % 9 == 0:
+                if frame_count % 9 == 0 and not used_fallback_location:
                     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                     is_real, spoof_score = check_real_face(frame_bgr, face_loc)
                     if not is_real:
@@ -198,6 +282,7 @@ def start_recognition(known_encodings):
                         continue
  
                 name, dist, is_masked = recognize_face(frame, face_loc, known_encodings)
+                print(f"🔎 인식 결과: name={name}, dist={dist:.3f}, masked={is_masked}")
                 if name:
                     if name == last_recognized: consecutive_count += 1
                     else: consecutive_count = 1; last_recognized = name
@@ -247,7 +332,7 @@ if __name__ == "__main__":
                 if is_ok:
                     print(f"🔓 환영합니다, {user_name}님!")
                     save_log(user_name, "ACCESS", img_path)
-                    led_green.on(); servo.min(); sleep(5); servo.max()
+                    led_green.on(); servo.min(); sleep(DOOR_OPEN_SECONDS); servo.max()
                     sleep(0.5); servo.detach(); led_green.off()
                 else:
                     print("❌ 접근 거부")

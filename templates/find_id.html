@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>아이디 찾기 | 스마트 도어락</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { min-height: 100vh; font-family: 'Noto Sans KR', sans-serif; background: #ffffff; color: #111111; }
+    .page { width: min(430px, 100%); margin: 0 auto; padding: 42px 28px 48px; min-height: 100vh; }
+    .back-btn { border: none; background: #f3f3f3; width: 38px; height: 38px; border-radius: 12px; font-size: 22px; cursor: pointer; margin-bottom: 28px; }
+    .title { font-size: 30px; font-weight: 700; line-height: 1.2; margin-bottom: 8px; }
+    .desc { font-size: 14px; color: #777; line-height: 1.6; margin-bottom: 30px; }
+    .form { display: flex; flex-direction: column; gap: 18px; }
+    .field { display: flex; flex-direction: column; gap: 8px; }
+    .field label { font-size: 14px; font-weight: 600; }
+    .input-wrap input { width: 100%; border: 1.5px solid #e0e0e0; border-radius: 14px; padding: 16px 18px; font-family: 'Noto Sans KR', sans-serif; font-size: 15px; color: #111; outline: none; }
+    .input-wrap input:focus { border-color: #111; }
+    .submit-btn { width: 100%; background: #111; color: #fff; border: none; border-radius: 50px; padding: 18px; font-family: 'Noto Sans KR', sans-serif; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 8px; }
+    .result { display: none; margin-top: 18px; padding: 16px; border-radius: 14px; background: #f4f8ff; border: 1px solid #dcecff; font-size: 15px; font-weight: 600; }
+    .notice { display: none; margin-top: 18px; padding: 14px 16px; border-radius: 14px; font-size: 14px; line-height: 1.5; }
+    .notice.error { display: block; background: #FFF1F1; color: #B34040; border: 1px solid #F5D0D0; }
+  </style>
+</head>
+<body>
+<div class="page">
+  <button class="back-btn" type="button" onclick="window.location.href='/login'" aria-label="뒤로">‹</button>
+  <h1 class="title">아이디 찾기</h1>
+  <p class="desc">복구 코드를 입력하면 현재 관리자 아이디를 확인할 수 있습니다.</p>
+
+  <div class="form">
+    <div class="field">
+      <label for="recoveryCode">복구 코드</label>
+      <div class="input-wrap"><input type="password" id="recoveryCode" placeholder="복구 코드를 입력하세요" /></div>
+    </div>
+    <button class="submit-btn" id="findIdBtn" type="button" onclick="findAdminId()">아이디 확인</button>
+  </div>
+  <div id="notice" class="notice"></div>
+  <div class="result" id="resultBox"></div>
+</div>
+
+<script>
+  function showNotice(message) {
+    const notice = document.getElementById('notice');
+    notice.textContent = message;
+    notice.className = 'notice error';
+  }
+
+  async function findAdminId() {
+    const recoveryCode = document.getElementById('recoveryCode').value.trim();
+    if (!recoveryCode) { showNotice('복구 코드를 입력해주세요.'); return; }
+    const btn = document.getElementById('findIdBtn');
+    btn.disabled = true;
+    btn.textContent = '확인 중...';
+    try {
+      const res = await fetch('/api/id/find', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({recovery_code: recoveryCode})
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        showNotice(data.error || '아이디 확인에 실패했습니다.');
+        return;
+      }
+      const box = document.getElementById('resultBox');
+      box.textContent = `관리자 아이디: ${data.admin_id}`;
+      box.style.display = 'block';
+    } catch(e) {
+      showNotice('아이디 확인 중 오류가 발생했습니다.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '아이디 확인';
+    }
+  }
+</script>
+</body>
+</html>

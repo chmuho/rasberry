@@ -1,6 +1,9 @@
 from flask import Flask, jsonify, render_template, request, send_from_directory, session, redirect
 import sqlite3
-from database import init_db, save_log, add_user, get_users
+from database import (
+    init_db, save_log, add_user, get_users,
+    get_admin_id, set_admin_id, set_admin_password, verify_admin_password
+)
 import requests
 import os
 from functools import wraps
@@ -16,7 +19,11 @@ RASPBERRY_PI_BASE_URL = f"http://{RASPBERRY_PI_IP}:{RASPBERRY_PI_PORT}"
 CAPTURE_DIR = os.path.join(app.root_path, 'static', 'captures')
 
 ADMIN_ID = os.getenv('DOORLOCK_ADMIN_ID', 'admin')
-ADMIN_PW = os.getenv('DOORLOCK_ADMIN_PW', 'change-me')
+ADMIN_PW = os.getenv('DOORLOCK_ADMIN_PW', 'admin1234')
+RECOVERY_CODE = os.getenv('DOORLOCK_RECOVERY_CODE', 'doorlock-reset')
+
+def current_admin_id():
+    return get_admin_id(ADMIN_ID)
 
 def login_required(f):
     @wraps(f)
@@ -32,15 +39,122 @@ def login_required(f):
 def login_page():
     return render_template('login.html')
 
+@app.route('/forgot-password')
+def forgot_password_page():
+    return render_template('forgot_password.html')
+
+@app.route('/reset-password')
+def reset_password_page():
+    if not session.get('password_reset_allowed'):
+        return redirect('/forgot-password')
+    return render_template('reset_password.html')
+
+@app.route('/find-id')
+def find_id_page():
+    return render_template('find_id.html')
+
+@app.route('/change-password')
+@login_required
+def change_password_page():
+    return render_template('change_password.html')
+
+@app.route('/change-id')
+@login_required
+def change_id_page():
+    return render_template('change_id.html')
+
 @app.route('/api/login', methods=['POST'])
 def api_login():
     data = request.get_json() or {}
     username = data.get('username')
     password = data.get('password')
-    if username == ADMIN_ID and password == ADMIN_PW:
+    if username == current_admin_id() and verify_admin_password(password, ADMIN_PW):
         session['logged_in'] = True
         return jsonify({"success": True}), 200
     return jsonify({"success": False, "error": "아이디 또는 비밀번호가 틀렸습니다"}), 401
+
+@app.route('/api/id/find', methods=['POST'])
+def api_find_id():
+    data = request.get_json() or {}
+    recovery_code = (data.get('recovery_code') or '').strip()
+    if recovery_code != RECOVERY_CODE:
+        return jsonify({"success": False, "error": "복구 코드가 올바르지 않습니다"}), 400
+    return jsonify({"success": True, "admin_id": current_admin_id()}), 200
+
+@app.route('/api/id/change', methods=['POST'])
+@login_required
+def api_change_id():
+    data = request.get_json() or {}
+    current_password = (data.get('current_password') or '').strip()
+    new_admin_id = (data.get('new_admin_id') or '').strip()
+
+    if not verify_admin_password(current_password, ADMIN_PW):
+        return jsonify({"success": False, "error": "현재 비밀번호가 올바르지 않습니다"}), 400
+    if len(new_admin_id) < 3:
+        return jsonify({"success": False, "error": "새 아이디는 3자 이상이어야 합니다"}), 400
+    if new_admin_id == current_admin_id():
+        return jsonify({"success": False, "error": "현재 아이디와 다른 아이디를 입력해주세요"}), 400
+    if not set_admin_id(new_admin_id):
+        return jsonify({"success": False, "error": "아이디를 저장하지 못했습니다"}), 500
+
+    session.clear()
+    return jsonify({"success": True, "message": "아이디가 변경되었습니다. 다시 로그인해주세요"}), 200
+
+@app.route('/api/password/find', methods=['POST'])
+def api_find_password():
+    data = request.get_json() or {}
+    username = (data.get('username') or '').strip()
+    recovery_code = (data.get('recovery_code') or '').strip()
+
+    if username != current_admin_id():
+        return jsonify({"success": False, "error": "관리자 아이디가 올바르지 않습니다"}), 400
+    if recovery_code != RECOVERY_CODE:
+        return jsonify({"success": False, "error": "복구 코드가 올바르지 않습니다"}), 400
+
+    session['password_reset_allowed'] = True
+    session['password_reset_username'] = username
+    return jsonify({"success": True, "message": "본인 확인이 완료되었습니다"}), 200
+
+@app.route('/api/password/reset', methods=['POST'])
+def api_reset_password():
+    if not session.get('password_reset_allowed'):
+        return jsonify({"success": False, "error": "비밀번호 찾기에서 본인 확인을 먼저 완료해주세요"}), 403
+
+    data = request.get_json() or {}
+    new_password = (data.get('new_password') or '').strip()
+    confirm_password = (data.get('confirm_password') or '').strip()
+
+    if len(new_password) < 8:
+        return jsonify({"success": False, "error": "새 비밀번호는 8자 이상이어야 합니다"}), 400
+    if new_password != confirm_password:
+        return jsonify({"success": False, "error": "새 비밀번호 확인이 일치하지 않습니다"}), 400
+    if not set_admin_password(new_password):
+        return jsonify({"success": False, "error": "비밀번호를 저장하지 못했습니다"}), 500
+
+    session.clear()
+    return jsonify({"success": True, "message": "비밀번호가 재설정되었습니다"}), 200
+
+@app.route('/api/password/change', methods=['POST'])
+@login_required
+def api_change_password():
+    data = request.get_json() or {}
+    current_password = (data.get('current_password') or '').strip()
+    new_password = (data.get('new_password') or '').strip()
+    confirm_password = (data.get('confirm_password') or '').strip()
+
+    if not verify_admin_password(current_password, ADMIN_PW):
+        return jsonify({"success": False, "error": "현재 비밀번호가 올바르지 않습니다"}), 400
+    if len(new_password) < 8:
+        return jsonify({"success": False, "error": "새 비밀번호는 8자 이상이어야 합니다"}), 400
+    if new_password != confirm_password:
+        return jsonify({"success": False, "error": "새 비밀번호 확인이 일치하지 않습니다"}), 400
+    if current_password == new_password:
+        return jsonify({"success": False, "error": "현재 비밀번호와 다른 비밀번호를 입력해주세요"}), 400
+    if not set_admin_password(new_password):
+        return jsonify({"success": False, "error": "비밀번호를 저장하지 못했습니다"}), 500
+
+    session.clear()
+    return jsonify({"success": True, "message": "비밀번호가 변경되었습니다. 다시 로그인해주세요"}), 200
 
 @app.route('/logout')
 def logout():
@@ -151,7 +265,37 @@ def api_register():
         if rpi_response.status_code == 200:
             add_user(user_id, display_name)
             return jsonify({"success": True, "message": f"{display_name} 등록 완료"}), 200
-        return jsonify({"success": False, "error": "라즈베리파이 응답 오류"}), 500
+        try:
+            error = rpi_response.json().get("error")
+        except ValueError:
+            error = None
+        return jsonify({"success": False, "error": error or "라즈베리파이 응답 오류"}), 500
+    except requests.exceptions.Timeout:
+        return jsonify({"success": False, "error": "응답 시간 초과"}), 504
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/register_mask", methods=["POST"])
+@login_required
+def api_register_mask():
+    try:
+        data = request.get_json() or {}
+        user_id = data.get('user_id', '').strip()
+        if not user_id:
+            return jsonify({"success": False, "error": "ID를 입력해주세요"}), 400
+        rpi_response = requests.post(
+            f"{RASPBERRY_PI_BASE_URL}/api/register_mask",
+            json={"name": user_id},
+            timeout=15
+        )
+        if rpi_response.status_code == 200:
+            message = rpi_response.json().get("message", "마스크 등록 완료")
+            return jsonify({"success": True, "message": message}), 200
+        try:
+            error = rpi_response.json().get("error")
+        except ValueError:
+            error = None
+        return jsonify({"success": False, "error": error or "라즈베리파이 응답 오류"}), 500
     except requests.exceptions.Timeout:
         return jsonify({"success": False, "error": "응답 시간 초과"}), 504
     except Exception as e:

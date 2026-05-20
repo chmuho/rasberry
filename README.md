@@ -25,12 +25,15 @@
 ├── mask_detector.py           # 마스크 착용 여부 및 상안부 영역 계산
 ├── templates/
 │   ├── login.html             # 관리자 로그인 화면
-│   └── logs.html              # 출입 로그/제어 대시보드
+│   ├── logs.html              # 출입 로그/제어 대시보드
+│   ├── find_id.html           # 관리자 아이디 찾기 화면
+│   ├── forgot_password.html   # 관리자 비밀번호 찾기 화면
+│   ├── reset_password.html    # 관리자 비밀번호 재설정 화면
+│   ├── change_id.html         # 관리자 아이디 변경 화면
+│   └── change_password.html   # 관리자 비밀번호 변경 화면
 ├── static/
-│   ├── app.js
-│   ├── styles.css
-│   ├── manifest.json
-│   └── service-worker.js
+│   ├── lock.jpg
+│   └── manifest.json
 └── Silent-Face-Anti-Spoofing/ # Anti-spoofing 외부 모델 코드
 ```
 
@@ -67,7 +70,8 @@ git clone https://github.com/minivision-ai/Silent-Face-Anti-Spoofing.git
 
 ```bash
 DOORLOCK_ADMIN_ID=admin
-DOORLOCK_ADMIN_PW=change-me
+DOORLOCK_ADMIN_PW=admin1234
+DOORLOCK_RECOVERY_CODE=doorlock-reset
 DOORLOCK_SECRET_KEY=change-this-secret-key
 RASPBERRY_PI_IP=127.0.0.1
 RASPBERRY_PI_PORT=5001
