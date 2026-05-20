@@ -1,28 +1,137 @@
 import face_recognition
 import cv2
+import json
 from picamera2 import Picamera2
 import numpy as np
 import os
 from gpiozero import Servo, LED, Button
 from time import sleep, time as get_time
 import sys
+from datetime import datetime
 from flask import Flask, request, jsonify
 import threading
+from urllib import parse, request as urlrequest
+from urllib.error import HTTPError, URLError
 from database import save_log
 from anti_spoofing import check_real_face
 from mask_detector import detect_mask_by_landmark, get_upper_face_location
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DOOR_OPEN_SECONDS = 10
+
+def load_local_env():
+    env_path = os.path.join(BASE_DIR, ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, "r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+load_local_env()
+
+DOOR_OPEN_SECONDS = 8
+DOOR_OPEN_SERVO_VALUE = 0.35
+REGISTER_WARMUP_SECONDS = 3.0
+RECOGNITION_WARMUP_SECONDS = 1.0
+KAKAO_REST_API_KEY = os.getenv("KAKAO_REST_API_KEY", "").strip()
+KAKAO_CLIENT_SECRET = os.getenv("KAKAO_CLIENT_SECRET", "").strip()
+KAKAO_ACCESS_TOKEN = os.getenv("KAKAO_ACCESS_TOKEN", "").strip()
+KAKAO_REFRESH_TOKEN = os.getenv("KAKAO_REFRESH_TOKEN", "").strip()
+KAKAO_ALERT_ENABLED = os.getenv("KAKAO_ALERT_ENABLED", "false").lower() == "true"
+DOORLOCK_WEB_URL = os.getenv("DOORLOCK_WEB_URL", "http://127.0.0.1:5000").strip()
  
 # --- 웹 원격 제어 서버 ---
 rpi_server = Flask(__name__)
 
-def capture_frame_after_countdown(message):
+def request_json(url, data, headers=None, timeout=8):
+    encoded = parse.urlencode(data).encode("utf-8")
+    req = urlrequest.Request(url, data=encoded, headers=headers or {}, method="POST")
+    with urlrequest.urlopen(req, timeout=timeout) as response:
+        body = response.read().decode("utf-8")
+        return response.status, json.loads(body) if body else {}
+
+def refresh_kakao_access_token():
+    global KAKAO_ACCESS_TOKEN
+    if not KAKAO_REST_API_KEY or not KAKAO_REFRESH_TOKEN:
+        return False
+    data = {
+        "grant_type": "refresh_token",
+        "client_id": KAKAO_REST_API_KEY,
+        "refresh_token": KAKAO_REFRESH_TOKEN,
+    }
+    if KAKAO_CLIENT_SECRET:
+        data["client_secret"] = KAKAO_CLIENT_SECRET
+    try:
+        _, payload = request_json(
+            "https://kauth.kakao.com/oauth/token",
+            data,
+            {"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
+        )
+    except (HTTPError, URLError, TimeoutError, ValueError) as e:
+        print(f"⚠️ 카카오 토큰 갱신 실패: {e}")
+        return False
+    KAKAO_ACCESS_TOKEN = payload.get("access_token", KAKAO_ACCESS_TOKEN)
+    if payload.get("refresh_token"):
+        print("ℹ️ 카카오 refresh token이 새로 발급되었습니다. .env의 KAKAO_REFRESH_TOKEN을 갱신해주세요.")
+    return bool(KAKAO_ACCESS_TOKEN)
+
+def send_kakao_intrusion_alert(image_path):
+    if not KAKAO_ALERT_ENABLED:
+        return
+    if not KAKAO_ACCESS_TOKEN:
+        print("⚠️ 카카오 알림 비활성: KAKAO_ACCESS_TOKEN이 없습니다.")
+        return
+
+    detected_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    template = {
+        "object_type": "text",
+        "text": (
+            "[스마트 도어락 침입 감지]\n"
+            "등록되지 않은 사용자가 접근했습니다.\n\n"
+            f"시간: {detected_at}\n"
+            "상태: 접근 거부\n"
+            "사진: 관리자 페이지에서 확인"
+        ),
+        "link": {
+            "web_url": DOORLOCK_WEB_URL,
+            "mobile_web_url": DOORLOCK_WEB_URL,
+        },
+        "button_title": "도어락 확인",
+    }
+    data = {"template_object": json.dumps(template, ensure_ascii=False)}
+    headers = {
+        "Authorization": f"Bearer {KAKAO_ACCESS_TOKEN}",
+        "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+    }
+
+    for attempt in range(2):
+        try:
+            status, _ = request_json(
+                "https://kapi.kakao.com/v2/api/talk/memo/default/send",
+                data,
+                headers,
+            )
+            if status == 200:
+                print(f"📨 카카오 침입 알림 전송 완료: {image_path}")
+            return
+        except HTTPError as e:
+            if e.code == 401 and attempt == 0 and refresh_kakao_access_token():
+                headers["Authorization"] = f"Bearer {KAKAO_ACCESS_TOKEN}"
+                continue
+            print(f"⚠️ 카카오 알림 전송 실패: HTTP {e.code}")
+            return
+        except (URLError, TimeoutError, ValueError) as e:
+            print(f"⚠️ 카카오 알림 전송 실패: {e}")
+            return
+
+def capture_frame_after_countdown(message, warmup_seconds=REGISTER_WARMUP_SECONDS):
     print(message)
     picam2.start()
     warmup_start = get_time()
-    while get_time() - warmup_start < 3.0:
+    while get_time() - warmup_start < warmup_seconds:
         if int(get_time() * 4) % 2 == 0:
             led_green.on()
         else:
@@ -39,12 +148,12 @@ def remote_door_control():
         action = data.get("action")
         if action == "open":
             print("\n🌐 [웹 원격 제어] 문 열기 요청 수신")
-            led_red.off(); led_green.on(); servo.min()
+            led_red.off(); led_green.on(); set_door_open()
             save_log("원격제어", "REMOTE_OPEN", "")
             return jsonify({"success": True, "message": "Door opened"}), 200
         elif action == "close":
             print("\n🌐 [웹 원격 제어] 문 닫기 요청 수신")
-            servo.max(); sleep(0.5); servo.detach()
+            set_door_locked()
             led_green.off(); led_red.on()
             save_log("원격제어", "REMOTE_CLOSE", "")
             return jsonify({"success": True, "message": "Door closed"}), 200
@@ -60,7 +169,7 @@ def register_user():
         if not name:
             return jsonify({"success": False, "error": "이름을 입력해주세요"}), 400
  
-        frame = capture_frame_after_countdown(f"\n📸 [{name}] 등록 시작... 3초 후 촬영")
+        frame = capture_frame_after_countdown(f"\n📸 [{name}] 등록 시작... {REGISTER_WARMUP_SECONDS:.0f}초 후 촬영")
  
         locs = face_recognition.face_locations(frame)
         if not locs:
@@ -88,7 +197,7 @@ def register_mask():
         if not name:
             return jsonify({"success": False, "error": "이름을 입력해주세요"}), 400
 
-        frame = capture_frame_after_countdown(f"\n📸 [{name}] 마스크 등록 시작... 3초 후 촬영")
+        frame = capture_frame_after_countdown(f"\n📸 [{name}] 마스크 등록 시작... {REGISTER_WARMUP_SECONDS:.0f}초 후 촬영")
 
         mask_path = os.path.join(BASE_DIR, f"master_{name}_mask.jpg")
         cv2.imwrite(mask_path, frame)
@@ -144,10 +253,20 @@ def run_rpi_server():
     rpi_server.run(host='0.0.0.0', port=5001, debug=False, use_reloader=False)
  
 # --- 하드웨어 설정 ---
-servo = Servo(18, initial_value=1, min_pulse_width=0.0005, max_pulse_width=0.0025)
+servo = Servo(18, initial_value=None, min_pulse_width=0.0005, max_pulse_width=0.0025)
 led_green = LED(17)
 led_red = LED(27)
 button = Button(22)
+
+def set_door_locked():
+    servo.max()
+    sleep(0.5)
+    servo.detach()
+
+def set_door_open():
+    servo.value = DOOR_OPEN_SERVO_VALUE
+    sleep(0.35)
+    servo.detach()
  
 # --- 카메라 초기화 ---
 print("📸 카메라를 초기화합니다...")
@@ -238,10 +357,10 @@ def start_recognition(known_encodings):
         print("⚠️ 등록된 마스터 얼굴 데이터가 없습니다.")
         return False, "데이터 없음", ""
  
-    print("📸 카메라 예열 중... (3초)")
+    print(f"📸 카메라 예열 중... ({RECOGNITION_WARMUP_SECONDS:.1f}초)")
     picam2.start()
     warmup_start = get_time()
-    while get_time() - warmup_start < 3.0:
+    while get_time() - warmup_start < RECOGNITION_WARMUP_SECONDS:
         picam2.capture_array()
         if int(get_time() * 4) % 2 == 0: led_green.on()
         else: led_green.off()
@@ -319,8 +438,8 @@ if __name__ == "__main__":
     web_thread.daemon = True
     web_thread.start()
  
-    led_red.on(); led_green.off(); servo.max()
-    sleep(0.5); servo.detach()
+    led_red.on(); led_green.off()
+    set_door_locked()
     print("🔒 시스템 대기 중...")
  
     try:
@@ -332,11 +451,11 @@ if __name__ == "__main__":
                 if is_ok:
                     print(f"🔓 환영합니다, {user_name}님!")
                     save_log(user_name, "ACCESS", img_path)
-                    led_green.on(); servo.min(); sleep(DOOR_OPEN_SECONDS); servo.max()
-                    sleep(0.5); servo.detach(); led_green.off()
+                    led_green.on(); set_door_open(); sleep(DOOR_OPEN_SECONDS); set_door_locked(); led_green.off()
                 else:
                     print("❌ 접근 거부")
                     save_log("침입자", "INTRUSION", img_path)
+                    send_kakao_intrusion_alert(img_path)
                     for _ in range(3): led_red.on(); sleep(0.2); led_red.off(); sleep(0.2)
                 led_red.on()
                 print("🔒 시스템 대기 중...")

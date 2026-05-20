@@ -13,6 +13,7 @@
 - Flask 기반 관리자 웹 대시보드
 - 사용자 등록/삭제 API
 - 웹에서 도어락 열기/닫기 원격 제어
+- 침입 감지 시 카카오톡 나에게 보내기 알림
 
 ## 프로젝트 구조
 
@@ -23,6 +24,7 @@
 ├── database.py                # SQLite 초기화 및 로그/사용자 저장
 ├── anti_spoofing.py           # Anti-spoofing 모델 연동
 ├── mask_detector.py           # 마스크 착용 여부 및 상안부 영역 계산
+├── kakao_token_helper.py       # 카카오톡 알림용 토큰 발급 도우미
 ├── templates/
 │   ├── login.html             # 관리자 로그인 화면
 │   ├── logs.html              # 출입 로그/제어 대시보드
@@ -75,8 +77,40 @@ DOORLOCK_RECOVERY_CODE=doorlock-reset
 DOORLOCK_SECRET_KEY=change-this-secret-key
 RASPBERRY_PI_IP=127.0.0.1
 RASPBERRY_PI_PORT=5001
+DOORLOCK_WEB_URL=http://127.0.0.1:5000
 ANTI_SPOOF_DIR=./Silent-Face-Anti-Spoofing
+KAKAO_ALERT_ENABLED=false
+KAKAO_REST_API_KEY=
+KAKAO_CLIENT_SECRET=
+KAKAO_REDIRECT_URI=http://localhost:8080/callback
+KAKAO_ACCESS_TOKEN=
+KAKAO_REFRESH_TOKEN=
 ```
+
+## 카카오톡 침입 알림 설정
+
+침입자가 감지되면 카카오톡 나와의 채팅방으로 알림을 보낼 수 있습니다. 토큰과 API 키는 개인정보에 해당하므로 `.env`에만 저장하고 GitHub에는 올리지 않습니다.
+
+1. Kakao Developers에서 애플리케이션을 생성합니다.
+2. 플랫폼 또는 카카오 로그인 설정에서 Redirect URI에 `http://localhost:8080/callback`을 등록합니다.
+3. 동의항목에서 카카오톡 메시지 전송 권한을 설정합니다.
+4. REST API 키를 `.env`의 `KAKAO_REST_API_KEY`에 입력합니다. Client secret을 사용 중이면 `KAKAO_CLIENT_SECRET`에도 값을 입력합니다.
+5. 아래 명령으로 인증 주소를 출력합니다.
+
+```bash
+python kakao_token_helper.py auth-url
+```
+
+6. 출력된 주소로 접속해 카카오 로그인을 완료한 뒤, 이동된 주소의 `code=` 뒤 값을 복사합니다.
+7. 복사한 code 값으로 토큰을 발급합니다.
+
+```bash
+python kakao_token_helper.py token 복사한_code값
+```
+
+8. 출력된 `KAKAO_ACCESS_TOKEN`, `KAKAO_REFRESH_TOKEN`을 `.env`에 넣고 `KAKAO_ALERT_ENABLED=true`로 변경합니다.
+
+카카오 access token은 만료될 수 있습니다. 프로그램은 refresh token으로 access token 갱신을 시도하며, 새 refresh token이 출력되면 `.env` 값을 갱신해야 합니다.
 
 ## 실행 방법
 
