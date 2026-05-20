@@ -8,7 +8,7 @@ from gpiozero import Servo, LED, Button
 from time import sleep, time as get_time
 import sys
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 import threading
 from urllib import parse, request as urlrequest
 from urllib.error import HTTPError, URLError
@@ -36,6 +36,7 @@ DOOR_OPEN_SECONDS = 8
 DOOR_OPEN_SERVO_VALUE = 0.35
 REGISTER_WARMUP_SECONDS = 3.0
 RECOGNITION_WARMUP_SECONDS = 1.0
+LED_BLINK_INTERVAL = 0.35
 KAKAO_REST_API_KEY = os.getenv("KAKAO_REST_API_KEY", "").strip()
 KAKAO_CLIENT_SECRET = os.getenv("KAKAO_CLIENT_SECRET", "").strip()
 KAKAO_ACCESS_TOKEN = os.getenv("KAKAO_ACCESS_TOKEN", "").strip()
@@ -78,7 +79,7 @@ def refresh_kakao_access_token():
         print("ℹ️ 카카오 refresh token이 새로 발급되었습니다. .env의 KAKAO_REFRESH_TOKEN을 갱신해주세요.")
     return bool(KAKAO_ACCESS_TOKEN)
 
-def send_kakao_intrusion_alert(image_path):
+def send_kakao_intrusion_alert(image_path, failure_reason=""):
     if not KAKAO_ALERT_ENABLED:
         return
     if not KAKAO_ACCESS_TOKEN:
@@ -93,6 +94,7 @@ def send_kakao_intrusion_alert(image_path):
             "등록되지 않은 사용자가 접근했습니다.\n\n"
             f"시간: {detected_at}\n"
             "상태: 접근 거부\n"
+            f"실패 사유: {failure_reason or '인증 실패'}\n"
             "사진: 관리자 페이지에서 확인"
         ),
         "link": {
@@ -129,17 +131,21 @@ def send_kakao_intrusion_alert(image_path):
 
 def capture_frame_after_countdown(message, warmup_seconds=REGISTER_WARMUP_SECONDS):
     print(message)
-    picam2.start()
-    warmup_start = get_time()
-    while get_time() - warmup_start < warmup_seconds:
-        if int(get_time() * 4) % 2 == 0:
-            led_green.on()
-        else:
+    if not camera_lock.acquire(blocking=False):
+        raise RuntimeError("카메라가 라이브 뷰에서 사용 중입니다. 라이브 뷰를 중지해주세요")
+    try:
+        picam2.start()
+        try:
+            warmup_start = get_time()
+            while get_time() - warmup_start < warmup_seconds:
+                blink_led(led_green, warmup_start, LED_BLINK_INTERVAL)
             led_green.off()
-    led_green.off()
-    frame = picam2.capture_array()
-    picam2.stop()
-    return frame
+            return picam2.capture_array()
+        finally:
+            picam2.stop()
+            led_green.off()
+    finally:
+        camera_lock.release()
  
 @rpi_server.route('/api/control/door', methods=['POST'])
 def remote_door_control():
@@ -248,6 +254,39 @@ def delete_user():
         return jsonify({"success": True, "message": f"{name} 삭제 완료"}), 200
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+@rpi_server.route('/api/camera/stream')
+def camera_stream():
+    if not camera_lock.acquire(blocking=False):
+        return jsonify({"success": False, "error": "카메라가 다른 작업에서 사용 중입니다"}), 409
+
+    def generate_frames():
+        try:
+            print("🎥 라이브 뷰 스트리밍 시작")
+            picam2.start()
+            sleep(0.3)
+            while True:
+                frame = picam2.capture_array()
+                ok, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+                if not ok:
+                    continue
+                yield (
+                    b'--frame\r\n'
+                    b'Content-Type: image/jpeg\r\n\r\n' +
+                    buffer.tobytes() +
+                    b'\r\n'
+                )
+                sleep(0.08)
+        except GeneratorExit:
+            pass
+        except Exception as e:
+            print(f"⚠️ 라이브 뷰 오류: {e}")
+        finally:
+            picam2.stop()
+            camera_lock.release()
+            print("🎥 라이브 뷰 스트리밍 종료")
+
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
  
 def run_rpi_server():
     rpi_server.run(host='0.0.0.0', port=5001, debug=False, use_reloader=False)
@@ -267,6 +306,13 @@ def set_door_open():
     servo.value = DOOR_OPEN_SERVO_VALUE
     sleep(0.35)
     servo.detach()
+
+def blink_led(led, started_at, interval=LED_BLINK_INTERVAL):
+    elapsed_steps = int((get_time() - started_at) / interval)
+    if elapsed_steps % 2 == 0:
+        led.on()
+    else:
+        led.off()
  
 # --- 카메라 초기화 ---
 print("📸 카메라를 초기화합니다...")
@@ -275,6 +321,7 @@ try:
     config = picam2.create_preview_configuration(main={"format": "RGB888", "size": (640, 480)})
     picam2.configure(config)
     picam2.set_controls({"AwbEnable": True, "AeEnable": True})
+    camera_lock = threading.Lock()
 except Exception as e:
     print(f"❌ 카메라 초기화 실패: {e}")
     sys.exit(1)
@@ -355,81 +402,101 @@ def recognize_face(frame, face_location, known_encodings):
 def start_recognition(known_encodings):
     if not known_encodings:
         print("⚠️ 등록된 마스터 얼굴 데이터가 없습니다.")
-        return False, "데이터 없음", ""
+        return False, "데이터 없음", "", "등록된 얼굴 데이터 없음"
  
-    print(f"📸 카메라 예열 중... ({RECOGNITION_WARMUP_SECONDS:.1f}초)")
-    picam2.start()
-    warmup_start = get_time()
-    while get_time() - warmup_start < RECOGNITION_WARMUP_SECONDS:
-        picam2.capture_array()
-        if int(get_time() * 4) % 2 == 0: led_green.on()
-        else: led_green.off()
-    led_green.off()
-    print("🔍 본인 확인 시작...")
- 
-    start_time = get_time()
-    authenticated, found_user, captured_image_path, last_frame = False, "침입자", "", None
-    consecutive_count, CONSECUTIVE_NEEDED, last_recognized = 0, 3, None
- 
+    if not camera_lock.acquire(blocking=False):
+        print("⚠️ 카메라가 라이브 뷰에서 사용 중입니다. 라이브 뷰를 중지한 뒤 다시 시도해주세요.")
+        return False, "카메라 사용 중", "", "카메라 사용 중"
     try:
-        frame_count = 0
-        while get_time() - start_time < 10:
-            if int(get_time() * 2) % 2 == 0: led_green.on()
-            else: led_green.off()
- 
-            frame = picam2.capture_array()
-            last_frame = frame
-            frame_count += 1
-            if frame_count % 3 != 0: continue
- 
-            face_locations = face_recognition.face_locations(frame)
-            used_fallback_location = False
-            if not face_locations:
-                if frame_count % 9 == 0:
-                    print("⚠️ 얼굴을 감지하지 못했습니다. 중앙 영역으로 인식을 시도합니다.")
-                face_locations = [get_center_face_location(frame)]
-                used_fallback_location = True
-            for face_loc in face_locations:
-                # Anti-spoofing 9프레임에 1번 체크
-                if frame_count % 9 == 0 and not used_fallback_location:
-                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    is_real, spoof_score = check_real_face(frame_bgr, face_loc)
-                    if not is_real:
-                        print(f"🚫 가짜 얼굴 감지! (score: {spoof_score})")
-                        consecutive_count = 0
-                        last_recognized = None
-                        continue
- 
-                name, dist, is_masked = recognize_face(frame, face_loc, known_encodings)
-                print(f"🔎 인식 결과: name={name}, dist={dist:.3f}, masked={is_masked}")
-                if name:
-                    if name == last_recognized: consecutive_count += 1
-                    else: consecutive_count = 1; last_recognized = name
-                    if consecutive_count >= CONSECUTIVE_NEEDED:
-                        from database import get_users
-                        user_map = get_users()
-                        found_user = user_map.get(name, name)
-                        authenticated = True; break
+        print(f"📸 카메라 예열 중... ({RECOGNITION_WARMUP_SECONDS:.1f}초)")
+        picam2.start()
+        warmup_start = get_time()
+        while get_time() - warmup_start < RECOGNITION_WARMUP_SECONDS:
+            picam2.capture_array()
+            blink_led(led_green, warmup_start)
+        led_green.off()
+        print("🔍 본인 확인 시작...")
+    
+        start_time = get_time()
+        authenticated, found_user, captured_image_path, last_frame = False, "침입자", "", None
+        consecutive_count, CONSECUTIVE_NEEDED, last_recognized = 0, 3, None
+        detected_face_once, spoof_failed, unknown_face_seen = False, False, False
+    
+        try:
+            frame_count = 0
+            while get_time() - start_time < 10:
+                blink_led(led_green, start_time)
+    
+                frame = picam2.capture_array()
+                last_frame = frame
+                frame_count += 1
+                if frame_count % 3 != 0: continue
+    
+                face_locations = face_recognition.face_locations(frame)
+                used_fallback_location = False
+                if not face_locations:
+                    if frame_count % 9 == 0:
+                        print("⚠️ 얼굴을 감지하지 못했습니다. 중앙 영역으로 인식을 시도합니다.")
+                    face_locations = [get_center_face_location(frame)]
+                    used_fallback_location = True
                 else:
-                    consecutive_count = 0; last_recognized = None
- 
-            if authenticated: break
- 
-        led_green.off()
- 
-        if last_frame is not None:
-            save_dir = 'static/captures'
-            os.makedirs(save_dir, exist_ok=True)
-            if not authenticated:
-                captured_image_path = f"{save_dir}/stranger_{int(get_time())}.jpg"
-                cv2.imwrite(captured_image_path, last_frame)
-                print(f"📸 침입자 사진 저장: {captured_image_path}")
- 
+                    detected_face_once = True
+                for face_loc in face_locations:
+                    # Anti-spoofing 9프레임에 1번 체크
+                    if frame_count % 9 == 0 and not used_fallback_location:
+                        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                        is_real, spoof_score = check_real_face(frame_bgr, face_loc)
+                        if not is_real:
+                            print(f"🚫 가짜 얼굴 감지! (score: {spoof_score})")
+                            spoof_failed = True
+                            consecutive_count = 0
+                            last_recognized = None
+                            continue
+    
+                    name, dist, is_masked = recognize_face(frame, face_loc, known_encodings)
+                    print(f"🔎 인식 결과: name={name}, dist={dist:.3f}, masked={is_masked}")
+                    if name:
+                        if name == last_recognized: consecutive_count += 1
+                        else: consecutive_count = 1; last_recognized = name
+                        if consecutive_count >= CONSECUTIVE_NEEDED:
+                            from database import get_users
+                            user_map = get_users()
+                            found_user = user_map.get(name, name)
+                            authenticated = True; break
+                    else:
+                        unknown_face_seen = True
+                        consecutive_count = 0; last_recognized = None
+    
+                if authenticated: break
+    
+            led_green.off()
+    
+            if last_frame is not None:
+                save_dir = 'static/captures'
+                os.makedirs(save_dir, exist_ok=True)
+                if not authenticated:
+                    captured_image_path = f"{save_dir}/stranger_{int(get_time())}.jpg"
+                    cv2.imwrite(captured_image_path, last_frame)
+                    print(f"📸 침입자 사진 저장: {captured_image_path}")
+    
+        finally:
+            picam2.stop()
+            led_green.off()
     finally:
-        picam2.stop()
-        led_green.off()
+        camera_lock.release()
  
-    return authenticated, found_user, captured_image_path
+    if authenticated:
+        failure_reason = ""
+    elif spoof_failed:
+        failure_reason = "anti-spoofing 실패"
+    elif not detected_face_once:
+        failure_reason = "얼굴 미감지"
+    elif unknown_face_seen:
+        failure_reason = "등록되지 않은 얼굴"
+    else:
+        failure_reason = "인증 조건 미충족"
+
+    return authenticated, found_user, captured_image_path, failure_reason
  
 # --- 메인 실행 루프 ---
 if __name__ == "__main__":
@@ -447,15 +514,19 @@ if __name__ == "__main__":
             if button.is_pressed:
                 print("\n🔘 버튼 클릭됨! 본인 확인 시작...")
                 led_red.off()
-                is_ok, user_name, img_path = start_recognition(masters)
+                is_ok, user_name, img_path, failure_reason = start_recognition(masters)
                 if is_ok:
                     print(f"🔓 환영합니다, {user_name}님!")
                     save_log(user_name, "ACCESS", img_path)
                     led_green.on(); set_door_open(); sleep(DOOR_OPEN_SECONDS); set_door_locked(); led_green.off()
+                elif user_name == "카메라 사용 중":
+                    print("⚠️ 라이브 뷰 사용 중이라 얼굴 인증을 건너뜁니다.")
+                    for _ in range(2): led_red.on(); sleep(0.2); led_red.off(); sleep(0.2)
                 else:
                     print("❌ 접근 거부")
-                    save_log("침입자", "INTRUSION", img_path)
-                    send_kakao_intrusion_alert(img_path)
+                    print(f"실패 사유: {failure_reason}")
+                    save_log("침입자", "INTRUSION", img_path, failure_reason)
+                    send_kakao_intrusion_alert(img_path, failure_reason)
                     for _ in range(3): led_red.on(); sleep(0.2); led_red.off(); sleep(0.2)
                 led_red.on()
                 print("🔒 시스템 대기 중...")

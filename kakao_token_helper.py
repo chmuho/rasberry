@@ -43,7 +43,7 @@ def print_auth_url(rest_api_key, redirect_uri):
     print("아래 주소를 브라우저에 붙여넣고 카카오 로그인/동의를 진행하세요.\n")
     print(f"https://kauth.kakao.com/oauth/authorize?{params}\n")
     print("동의 후 이동된 주소에서 code= 뒤 값을 복사해서 다음 명령에 넣으면 됩니다.")
-    print(f"python kakao_token_helper.py token 복사한_code값")
+    print(f"python kakao_token_helper.근데 py token 복사한_code값")
 
 
 def exchange_token(rest_api_key, redirect_uri, code, client_secret=""):

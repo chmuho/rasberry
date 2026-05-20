@@ -4,6 +4,12 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 DB_PATH = "doorlock_logs.db"
 
+def ensure_failure_reason_column(cursor):
+    cursor.execute("PRAGMA table_info(access_logs)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "failure_reason" not in columns:
+        cursor.execute("ALTER TABLE access_logs ADD COLUMN failure_reason TEXT DEFAULT ''")
+
 def init_db():
     """DB 초기화"""
     conn = sqlite3.connect(DB_PATH)
@@ -18,6 +24,8 @@ def init_db():
         image_path TEXT
     )
     """)
+
+    ensure_failure_reason_column(cursor)
 
     # ← 추가
     cursor.execute("""
@@ -39,7 +47,7 @@ def init_db():
     conn.close()
     print("DB 생성 완료")
 
-def save_log(user_name, status, image_path):
+def save_log(user_name, status, image_path, failure_reason=""):
     """출입 기록 저장 (라즈베리파이 얼굴인식에서 호출)
 
     Args:
@@ -56,15 +64,18 @@ def save_log(user_name, status, image_path):
         
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        ensure_failure_reason_column(cursor)
+
         cursor.execute("""
-        INSERT INTO access_logs(user_name, timestamp, status, image_path)
-        VALUES(?, ?, ?, ?)
-        """, (user_name, current_time, status, image_path))
+        INSERT INTO access_logs(user_name, timestamp, status, image_path, failure_reason)
+        VALUES(?, ?, ?, ?, ?)
+        """, (user_name, current_time, status, image_path, failure_reason))
 
         conn.commit()
         conn.close()
 
-        print(f"[DB 저장] user_name={user_name}, status={status}, time={current_time}")
+        reason_text = f", reason={failure_reason}" if failure_reason else ""
+        print(f"[DB 저장] user_name={user_name}, status={status}, time={current_time}{reason_text}")
         return True
         
     except Exception as e:

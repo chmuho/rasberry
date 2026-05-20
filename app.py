@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template, request, send_from_directory, session, redirect
+from flask import Flask, jsonify, render_template, request, send_from_directory, session, redirect, Response, stream_with_context
 import sqlite3
 from database import (
     init_db, save_log, add_user, get_users,
@@ -183,10 +183,21 @@ def custom_static(filename):
 def get_logs():
     conn = sqlite3.connect("doorlock_logs.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT timestamp, user_name, status, image_path FROM access_logs ORDER BY id DESC")
+    cursor.execute("PRAGMA table_info(access_logs)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "failure_reason" in columns:
+        cursor.execute("SELECT timestamp, user_name, status, image_path, failure_reason FROM access_logs ORDER BY id DESC")
+    else:
+        cursor.execute("SELECT timestamp, user_name, status, image_path, '' FROM access_logs ORDER BY id DESC")
     rows = cursor.fetchall()
     conn.close()
-    return [{"name": row[1] or "침입자", "time": row[0], "status": row[2], "image": row[3]} for row in rows]
+    return [{
+        "name": row[1] or "침입자",
+        "time": row[0],
+        "status": row[2],
+        "image": row[3],
+        "reason": row[4] or "",
+    } for row in rows]
 
 @app.route("/master/<filename>")
 @login_required
@@ -203,6 +214,33 @@ def home():
 def logs():
     return jsonify(get_logs())
 
+@app.route("/api/camera/stream")
+@login_required
+def api_camera_stream():
+    try:
+        rpi_response = requests.get(
+            f"{RASPBERRY_PI_BASE_URL}/api/camera/stream",
+            stream=True,
+            timeout=(3, None)
+        )
+        if rpi_response.status_code != 200:
+            return jsonify({"success": False, "error": "카메라를 사용할 수 없습니다"}), rpi_response.status_code
+
+        def proxy_stream():
+            try:
+                for chunk in rpi_response.iter_content(chunk_size=4096):
+                    if chunk:
+                        yield chunk
+            finally:
+                rpi_response.close()
+
+        return Response(
+            stream_with_context(proxy_stream()),
+            content_type=rpi_response.headers.get("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        )
+    except requests.exceptions.RequestException:
+        return jsonify({"success": False, "error": "라즈베리파이 카메라 서버에 연결할 수 없습니다"}), 503
+
 @app.route("/api/intrusion_count")
 @login_required
 def api_intrusion_count():
@@ -213,6 +251,74 @@ def api_intrusion_count():
         result = cursor.fetchone()
         conn.close()
         return jsonify({"success": True, "intrusion_count": result[0] if result else 0}), 200
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route("/api/statistics")
+@login_required
+def api_statistics():
+    try:
+        conn = sqlite3.connect("doorlock_logs.db")
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT COUNT(*) FROM access_logs
+            WHERE status='ACCESS' AND date(timestamp)=date('now', 'localtime')
+        """)
+        today_access_count = cursor.fetchone()[0]
+
+        cursor.execute("""
+            SELECT COUNT(*) FROM access_logs
+            WHERE status IN ('INTRUSION', 'INTRUSION_ALERT')
+              AND date(timestamp)=date('now', 'localtime')
+        """)
+        today_intrusion_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM users")
+        user_count = cursor.fetchone()[0]
+
+        cursor.execute("""
+            SELECT user_name, timestamp FROM access_logs
+            WHERE status='ACCESS'
+            ORDER BY id DESC LIMIT 1
+        """)
+        latest_access = cursor.fetchone()
+
+        cursor.execute("""
+            SELECT user_name, COUNT(*) as count FROM access_logs
+            WHERE status='ACCESS'
+            GROUP BY user_name
+            ORDER BY count DESC, user_name ASC
+            LIMIT 6
+        """)
+        user_access_counts = [
+            {"name": row[0] or "이름 없음", "count": row[1]}
+            for row in cursor.fetchall()
+        ]
+
+        cursor.execute("""
+            SELECT strftime('%H', timestamp) as hour, COUNT(*) as count FROM access_logs
+            WHERE status IN ('INTRUSION', 'INTRUSION_ALERT')
+              AND datetime(timestamp) >= datetime('now', 'localtime', '-24 hours')
+            GROUP BY hour
+            ORDER BY hour ASC
+        """)
+        hourly_map = {row[0]: row[1] for row in cursor.fetchall()}
+        hourly_intrusions = [
+            {"hour": f"{hour:02d}", "count": hourly_map.get(f"{hour:02d}", 0)}
+            for hour in range(24)
+        ]
+
+        conn.close()
+        return jsonify({
+            "today_access_count": today_access_count,
+            "today_intrusion_count": today_intrusion_count,
+            "user_count": user_count,
+            "latest_access_user": latest_access[0] if latest_access else None,
+            "latest_access_time": latest_access[1] if latest_access else None,
+            "user_access_counts": user_access_counts,
+            "hourly_intrusions": hourly_intrusions,
+        })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -230,6 +336,27 @@ def api_users():
                 if name not in users:
                     users[name] = {'id': name, 'name': user_map.get(name, name), 'photos': []}
                 users[name]['photos'].append(file)
+
+        conn = sqlite3.connect("doorlock_logs.db")
+        cursor = conn.cursor()
+        for user_id, user in users.items():
+            cursor.execute("""
+                SELECT COUNT(*), MAX(timestamp) FROM access_logs
+                WHERE status='ACCESS' AND user_name=?
+            """, (user['name'],))
+            display_count, display_last = cursor.fetchone()
+            cursor.execute("""
+                SELECT COUNT(*), MAX(timestamp) FROM access_logs
+                WHERE status='ACCESS' AND user_name=?
+            """, (user_id,))
+            id_count, id_last = cursor.fetchone()
+            user['access_count'] = (display_count or 0) + (id_count or 0)
+            user['last_access_time'] = max(
+                [t for t in (display_last, id_last) if t],
+                default=None
+            )
+        conn.close()
+
         return jsonify(list(users.values())), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
