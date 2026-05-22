@@ -334,6 +334,30 @@ def get_center_face_location(frame):
         int(height * 0.82),
         int(width * 0.15),
     )
+
+def get_mask_fallback_locations(frame):
+    height, width = frame.shape[:2]
+    return [
+        (
+            int(height * 0.08),
+            int(width * 0.80),
+            int(height * 0.58),
+            int(width * 0.20),
+        ),
+        (
+            int(height * 0.05),
+            int(width * 0.86),
+            int(height * 0.62),
+            int(width * 0.14),
+        ),
+        (
+            int(height * 0.12),
+            int(width * 0.74),
+            int(height * 0.58),
+            int(width * 0.26),
+        ),
+        get_center_face_location(frame),
+    ]
  
 def load_master_faces():
     known_encodings = {}
@@ -366,38 +390,66 @@ def load_master_faces():
     return known_encodings
  
 def recognize_face(frame, face_location, known_encodings):
-    THRESHOLD_NORMAL = 0.50
-    THRESHOLD_MASK = 0.62
+    THRESHOLD_NORMAL = 0.38
+    THRESHOLD_MASK = 0.40
     is_masked, upper_pts = detect_mask_by_landmark(frame, face_location)
-    unknown_encodings = []
+    best_name, best_dist, best_key = None, 1.0, None
 
     full_encs = face_recognition.face_encodings(frame, [face_location])
     if full_encs:
-        unknown_encodings.append((full_encs[0], 'no_mask', THRESHOLD_NORMAL))
-
-    if upper_pts:
-        upper_loc = get_upper_face_location(upper_pts, frame.shape)
-        if upper_loc:
-            upper_encs = face_recognition.face_encodings(frame, [upper_loc])
-            if upper_encs:
-                unknown_encodings.append((upper_encs[0], 'mask', THRESHOLD_MASK))
-
-    if not unknown_encodings:
-        return None, 1.0, is_masked
-
-    best_name, best_dist, best_key = None, 1.0, None
-    for unknown_enc, preferred_key, threshold in unknown_encodings:
+        full_enc = full_encs[0]
         for name, enc_dict in known_encodings.items():
-            candidate = enc_dict.get(preferred_key)
+            candidate = enc_dict.get('no_mask')
+            if candidate is None:
+                continue
+            dist = float(face_recognition.face_distance([candidate], full_enc)[0])
+            if dist < THRESHOLD_NORMAL and dist < best_dist:
+                best_dist = dist
+                best_name = name
+                best_key = 'no_mask'
+        if best_name:
+            return best_name, best_dist, False
+
+    if is_masked and upper_pts:
+        upper_loc = get_upper_face_location(upper_pts, frame.shape)
+        upper_encs = face_recognition.face_encodings(frame, [upper_loc]) if upper_loc else []
+        if not upper_encs:
+            return None, best_dist, is_masked
+        upper_enc = upper_encs[0]
+        for name, enc_dict in known_encodings.items():
+            candidate = enc_dict.get('mask')
+            if candidate is None:
+                continue
+            dist = float(face_recognition.face_distance([candidate], upper_enc)[0])
+            if dist < THRESHOLD_MASK and dist < best_dist:
+                best_dist = dist
+                best_name = name
+                best_key = 'mask'
+
+    matched_as_masked = best_key == 'mask' if best_key else is_masked
+    return best_name, best_dist, matched_as_masked
+
+def recognize_mask_with_fallback(frame, known_encodings):
+    THRESHOLD_MASK_FALLBACK = 0.35
+    best_name, best_dist = None, 1.0
+
+    for face_location in get_mask_fallback_locations(frame):
+        encs = face_recognition.face_encodings(frame, [face_location])
+        if not encs:
+            continue
+
+        unknown_enc = encs[0]
+        for name, enc_dict in known_encodings.items():
+            candidate = enc_dict.get('mask')
             if candidate is None:
                 continue
             dist = float(face_recognition.face_distance([candidate], unknown_enc)[0])
-            if dist < threshold and dist < best_dist:
+            if dist < best_dist:
                 best_dist = dist
                 best_name = name
-                best_key = preferred_key
-    matched_as_masked = best_key == 'mask' if best_key else is_masked
-    return best_name, best_dist, matched_as_masked
+
+    matched_name = best_name if best_dist < THRESHOLD_MASK_FALLBACK else None
+    return matched_name, best_dist, True
  
 def start_recognition(known_encodings):
     if not known_encodings:
@@ -420,6 +472,7 @@ def start_recognition(known_encodings):
         start_time = get_time()
         authenticated, found_user, captured_image_path, last_frame = False, "침입자", "", None
         consecutive_count, CONSECUTIVE_NEEDED, last_recognized = 0, 3, None
+        mask_match_counts, MASK_FALLBACK_NEEDED = {}, 4
         detected_face_once, spoof_failed, unknown_face_seen = False, False, False
     
         try:
@@ -436,9 +489,19 @@ def start_recognition(known_encodings):
                 used_fallback_location = False
                 if not face_locations:
                     if frame_count % 9 == 0:
-                        print("⚠️ 얼굴을 감지하지 못했습니다. 중앙 영역으로 인식을 시도합니다.")
-                    face_locations = [get_center_face_location(frame)]
-                    used_fallback_location = True
+                        print("⚠️ 얼굴을 감지하지 못했습니다.")
+                    name, dist, is_masked = recognize_mask_with_fallback(frame, known_encodings)
+                    print(f"🔎 마스크 fallback 후보: name={name}, dist={dist:.3f}")
+                    if name:
+                        mask_match_counts[name] = mask_match_counts.get(name, 0) + 1
+                        print(f"   ↳ 마스크 누적 확인: {name} {mask_match_counts[name]}/{MASK_FALLBACK_NEEDED}")
+                        if mask_match_counts[name] >= MASK_FALLBACK_NEEDED:
+                            from database import get_users
+                            user_map = get_users()
+                            found_user = user_map.get(name, name)
+                            authenticated = True
+                            break
+                    continue
                 else:
                     detected_face_once = True
                 for face_loc in face_locations:
